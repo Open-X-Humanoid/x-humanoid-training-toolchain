@@ -11,23 +11,23 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import builtins
 import datetime as dt
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Type
 
 import draccus
 from huggingface_hub import hf_hub_download
 from huggingface_hub.errors import HfHubHTTPError
 
-from lerobot.common import envs
-from lerobot.common.optim import OptimizerConfig
-from lerobot.common.optim.schedulers import LRSchedulerConfig
-from lerobot.common.utils.hub import HubMixin
+from lerobot import envs
 from lerobot.configs import parser
 from lerobot.configs.default import DatasetConfig, EvalConfig, WandBConfig
 from lerobot.configs.policies import PreTrainedConfig
+from lerobot.optim import OptimizerConfig
+from lerobot.optim.schedulers import LRSchedulerConfig
+from lerobot.utils.hub import HubMixin
 
 TRAIN_CONFIG_NAME = "train_config.json"
 
@@ -116,6 +116,11 @@ class TrainPipelineConfig(HubMixin):
             self.optimizer = self.policy.get_optimizer_preset()
             self.scheduler = self.policy.get_scheduler_preset()
 
+        if self.policy.push_to_hub and not self.policy.repo_id:
+            raise ValueError(
+                "'policy.repo_id' argument missing. Please specify it to push the model to the hub."
+            )
+
     @classmethod
     def __get_path_fields__(cls) -> list[str]:
         """This enables the parser to load config from the policy using `--policy.path=local/dir`"""
@@ -130,7 +135,7 @@ class TrainPipelineConfig(HubMixin):
 
     @classmethod
     def from_pretrained(
-        cls: Type["TrainPipelineConfig"],
+        cls: builtins.type["TrainPipelineConfig"],
         pretrained_name_or_path: str | Path,
         *,
         force_download: bool = False,
@@ -170,6 +175,10 @@ class TrainPipelineConfig(HubMixin):
                 ) from e
 
         cli_args = kwargs.pop("cli_args", [])
-        cfg = draccus.parse(cls, config_file, args=cli_args)
+        with draccus.config_type("json"):
+            return draccus.parse(cls, config_file, args=cli_args)
 
-        return cfg
+
+@dataclass(kw_only=True)
+class TrainRLServerPipelineConfig(TrainPipelineConfig):
+    dataset: DatasetConfig | None = None  # NOTE: In RL, we don't need an offline dataset
