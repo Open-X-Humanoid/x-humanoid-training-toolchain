@@ -12,8 +12,9 @@
 本项目是 RoboMIND 数据集和天工机器人对于 Lerobot 开源框架适配的训练工具链。使用此项目，用户可以基于 Lerobot 开源框架的算法实现在 RoboMIND 数据集的使用和天工机器人的具身操作，降低开发者开发门槛，扩展 RoboMIND 数据集和天工机器人生态建设。
 
 - 支持开源多本体数据集 RoboMIND。
-- 支持 LerobotDataset V2.1。
+- 升级至 LeRobotDataset V3.0，提升数据结构和性能。
 - 支持天工机器人的具身操作训练。
+- 集成 MetaWorld 和 Libero 基准测试环境。
 - 未来支持 RoboMIND/慧思开物/天工的生态建设。
 
 <table><tbody>

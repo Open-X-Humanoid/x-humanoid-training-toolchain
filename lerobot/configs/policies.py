@@ -12,24 +12,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import abc
+import builtins
+import json
 import logging
 import os
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Type, TypeVar
+from typing import TypeVar
 
 import draccus
 from huggingface_hub import hf_hub_download
 from huggingface_hub.constants import CONFIG_NAME
 from huggingface_hub.errors import HfHubHTTPError
 
-from lerobot.common.optim.optimizers import OptimizerConfig
-from lerobot.common.optim.schedulers import LRSchedulerConfig
-from lerobot.common.utils.hub import HubMixin
-from lerobot.common.utils.utils import auto_select_torch_device, is_amp_available, is_torch_device_available
-from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
+from lerobot.configs.types import FeatureType, PolicyFeature
+from lerobot.optim.optimizers import OptimizerConfig
+from lerobot.optim.schedulers import LRSchedulerConfig
+from lerobot.utils.constants import ACTION, OBS_STATE
+from lerobot.utils.hub import HubMixin
+from lerobot.utils.utils import auto_select_torch_device, is_amp_available, is_torch_device_available
 
-# Generic variable that is either PreTrainedConfig or a subclass thereof
 T = TypeVar("T", bound="PreTrainedConfig")
 
 
@@ -50,7 +53,6 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
     """
 
     n_obs_steps: int = 1
-    normalization_mapping: dict[str, NormalizationMode] = field(default_factory=dict)
 
     input_features: dict[str, PolicyFeature] = field(default_factory=dict)
     output_features: dict[str, PolicyFeature] = field(default_factory=dict)
@@ -59,6 +61,16 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
     # `use_amp` determines whether to use Automatic Mixed Precision (AMP) for training and evaluation. With AMP,
     # automatic gradient scaling is used.
     use_amp: bool = False
+
+    push_to_hub: bool = True
+    repo_id: str | None = None
+
+    # Upload on private repository on the Hugging Face hub.
+    private: bool | None = None
+    # Add tags to your policy on the hub.
+    tags: list[str] | None = None
+    # Add tags to your policy on the hub.
+    license: str | None = None
 
     def __post_init__(self):
         self.pretrained_path = None
@@ -78,15 +90,18 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
     def type(self) -> str:
         return self.get_choice_name(self.__class__)
 
-    @abc.abstractproperty
+    @property
+    @abc.abstractmethod
     def observation_delta_indices(self) -> list | None:
         raise NotImplementedError
 
-    @abc.abstractproperty
+    @property
+    @abc.abstractmethod
     def action_delta_indices(self) -> list | None:
         raise NotImplementedError
 
-    @abc.abstractproperty
+    @property
+    @abc.abstractmethod
     def reward_delta_indices(self) -> list | None:
         raise NotImplementedError
 
@@ -104,8 +119,8 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
 
     @property
     def robot_state_feature(self) -> PolicyFeature | None:
-        for _, ft in self.input_features.items():
-            if ft.type is FeatureType.STATE:
+        for ft_name, ft in self.input_features.items():
+            if ft.type is FeatureType.STATE and ft_name == OBS_STATE:
                 return ft
         return None
 
@@ -122,8 +137,8 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
 
     @property
     def action_feature(self) -> PolicyFeature | None:
-        for _, ft in self.output_features.items():
-            if ft.type is FeatureType.ACTION:
+        for ft_name, ft in self.output_features.items():
+            if ft.type is FeatureType.ACTION and ft_name == ACTION:
                 return ft
         return None
 
@@ -133,7 +148,7 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
 
     @classmethod
     def from_pretrained(
-        cls: Type[T],
+        cls: builtins.type[T],
         pretrained_name_or_path: str | Path,
         *,
         force_download: bool = False,
@@ -170,7 +185,21 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
                     f"{CONFIG_NAME} not found on the HuggingFace Hub in {model_id}"
                 ) from e
 
-        # HACK: this is very ugly, ideally we'd like to be able to do that natively with draccus
+        # HACK: Parse the original config to get the config subclass, so that we can
+        # apply cli overrides.
+        # This is very ugly, ideally we'd like to be able to do that natively with draccus
         # something like --policy.path (in addition to --policy.type)
+        with draccus.config_type("json"):
+            orig_config = draccus.parse(cls, config_file, args=[])
+
+        with open(config_file) as f:
+            config = json.load(f)
+
+        config.pop("type")
+        with tempfile.NamedTemporaryFile("w+", delete=False, suffix=".json") as f:
+            json.dump(config, f)
+            config_file = f.name
+
         cli_overrides = policy_kwargs.pop("cli_overrides", [])
-        return draccus.parse(cls, config_file, args=cli_overrides)
+        with draccus.config_type("json"):
+            return draccus.parse(orig_config.__class__, config_file, args=cli_overrides)

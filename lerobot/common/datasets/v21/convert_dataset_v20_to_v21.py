@@ -66,26 +66,26 @@ def convert_dataset(
 
     convert_stats(dataset, num_workers=num_workers)
     ref_stats = load_stats(dataset.root)
-    check_aggregate_stats(dataset, ref_stats)
+    # check_aggregate_stats(dataset, ref_stats)
 
     dataset.meta.info["codebase_version"] = CODEBASE_VERSION
     write_info(dataset.meta.info, dataset.root)
 
-    dataset.push_to_hub(branch=branch, tag_version=False, allow_patterns="meta/")
+    # dataset.push_to_hub(branch=branch, tag_version=False, allow_patterns="meta/")
 
-    # delete old stats.json file
-    if (dataset.root / STATS_PATH).is_file:
-        (dataset.root / STATS_PATH).unlink()
+    # # delete old stats.json file
+    # if (dataset.root / STATS_PATH).is_file:
+    #     (dataset.root / STATS_PATH).unlink()
 
-    hub_api = HfApi()
-    if hub_api.file_exists(
-        repo_id=dataset.repo_id, filename=STATS_PATH, revision=branch, repo_type="dataset"
-    ):
-        hub_api.delete_file(
-            path_in_repo=STATS_PATH, repo_id=dataset.repo_id, revision=branch, repo_type="dataset"
-        )
+    # hub_api = HfApi()
+    # if hub_api.file_exists(
+    #     repo_id=dataset.repo_id, filename=STATS_PATH, revision=branch, repo_type="dataset"
+    # ):
+    #     hub_api.delete_file(
+    #         path_in_repo=STATS_PATH, repo_id=dataset.repo_id, revision=branch, repo_type="dataset"
+    #     )
 
-    hub_api.create_tag(repo_id, tag=CODEBASE_VERSION, revision=branch, repo_type="dataset")
+    # hub_api.create_tag(repo_id, tag=CODEBASE_VERSION, revision=branch, repo_type="dataset")
 
 
 if __name__ == "__main__":

@@ -11,7 +11,7 @@ import h5py
 import numpy as np
 from tqdm import tqdm
 
-from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets.lerobot_dataset import LeRobotDataset  # v3.0 API
 
 
 def load_config(config_path: str) -> dict:
