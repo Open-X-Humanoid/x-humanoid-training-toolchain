@@ -13,9 +13,8 @@
 This project provides a training toolchain for adapting TienKung humanoid robots and RoboMIND dataset with the open-source LeRobot framework. It enables users to  facilitates development using RoboMIND dataset and train embodied manipulation models for TienKung robots based on the Lerobot. This project lowers the barrier to entry for developing embodied manipulations while expanding the ecosystem of RoboMIND and TienKung robots.
 
 - Support for RoboMIND, an open source multi-ontology dataset
-- Upgraded to LeRobotDataset V3.0 with improved data structure and performance
+- Compatibility with lerobotDataset V2.1
 - Training pipelines for TienKung robots' embodied manipulation
-- Integrated MetaWorld and Libero benchmark environments
 - Future roadmap for ecosystem development of RoboMIND/Huisikaiwu/TienKung
 
 

@@ -23,13 +23,6 @@ class FeatureType(str, Enum):
     VISUAL = "VISUAL"
     ENV = "ENV"
     ACTION = "ACTION"
-    REWARD = "REWARD"
-    LANGUAGE = "LANGUAGE"
-
-
-class PipelineFeatureType(str, Enum):
-    ACTION = "ACTION"
-    OBSERVATION = "OBSERVATION"
 
 
 class NormalizationMode(str, Enum):
