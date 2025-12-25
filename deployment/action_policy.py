@@ -10,7 +10,7 @@ import numpy as np
 import torch
 
 # Local imports
-from lerobot.common.policies.act.modeling_act import ACTPolicy as Policy
+from lerobot.policies.act.modeling_act import ACTPolicy as Policy
 
 
 class PolicyAgent:

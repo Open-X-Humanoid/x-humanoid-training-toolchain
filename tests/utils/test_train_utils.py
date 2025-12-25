@@ -14,7 +14,7 @@
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from lerobot.common.constants import (
+from lerobot.utils.constants import (
     CHECKPOINTS_DIR,
     LAST_CHECKPOINT_LINK,
     OPTIMIZER_PARAM_GROUPS,
@@ -24,7 +24,7 @@ from lerobot.common.constants import (
     TRAINING_STATE_DIR,
     TRAINING_STEP,
 )
-from lerobot.common.utils.train_utils import (
+from lerobot.utils.train_utils import (
     get_step_checkpoint_dir,
     get_step_identifier,
     load_training_state,

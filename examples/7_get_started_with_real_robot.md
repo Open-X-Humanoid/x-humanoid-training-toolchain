@@ -56,7 +56,7 @@ Now you are ready to configure your motors for the first time, as detailed in th
 
 If you have already configured your motors the first time, you can streamline the process by directly running the teleoperate script (which is detailed further in the tutorial):
 ```bash
-python lerobot/scripts/control_robot.py \
+python lerobot/scripts/lerobot_teleoperate.py \
   --robot.type=koch \
   --control.type=teleoperate
 ```
@@ -75,7 +75,7 @@ You will need to unplug each motor in turn and run a command the identify the mo
 
 Do the Leader arm first, as all of its motors are of the same type. Plug in your first motor on your leader arm and run this script to set its ID to 1.
 ```bash
-python lerobot/scripts/configure_motor.py \
+python lerobot/scripts/lerobot_setup_motors.py \
   --port /dev/tty.usbmodem58760432961 \
   --brand dynamixel \
   --model xl330-m288 \
@@ -85,7 +85,7 @@ python lerobot/scripts/configure_motor.py \
 
 Then unplug your first motor and plug the second motor and set its ID to 2.
 ```bash
-python lerobot/scripts/configure_motor.py \
+python lerobot/scripts/lerobot_setup_motors.py \
   --port /dev/tty.usbmodem58760432961 \
   --brand dynamixel \
   --model xl330-m288 \
@@ -105,7 +105,7 @@ To begin, create two instances of the  [`DynamixelMotorsBus`](../lerobot/common/
 
 To find the correct ports for each arm, run the utility script twice:
 ```bash
-python lerobot/scripts/find_motors_bus_port.py
+python lerobot/scripts/lerobot_find_port.py
 ```
 
 Example output when identifying the leader arm's port (e.g., `/dev/tty.usbmodem575E0031751` on Mac, or possibly `/dev/ttyACM0` on Linux):
@@ -700,11 +700,11 @@ torch.Size([3, 480, 640])
 
 ### d. Use `control_robot.py` and our `teleoperate` function
 
-Instead of manually running the python code in a terminal window, you can use [`lerobot/scripts/control_robot.py`](../lerobot/scripts/control_robot.py) to instantiate your robot by providing the robot configurations via command line and control your robot with various modes as explained next.
+Instead of manually running the python code in a terminal window, you can use [`lerobot/scripts/lerobot_teleoperate.py`](../lerobot/scripts/lerobot_teleoperate.py) to instantiate your robot by providing the robot configurations via command line and control your robot with various modes as explained next.
 
 Try running this code to teleoperate your robot (if you dont have a camera, keep reading):
 ```bash
-python lerobot/scripts/control_robot.py \
+python lerobot/scripts/lerobot_teleoperate.py \
   --robot.type=koch \
   --control.type=teleoperate
 ```
@@ -716,14 +716,14 @@ INFO 2024-08-10 11:15:03 ol_robot.py:209 dt: 5.12 (195.1hz) dtRlead: 4.93 (203.0
 
 It contains
 - `2024-08-10 11:15:03` which is the date and time of the call to the print function.
-- `ol_robot.py:209` which is the end of the file name and the line number where the print function is called  (`lerobot/scripts/control_robot.py` line `209`).
+- `ol_robot.py:209` which is the end of the file name and the line number where the print function is called  (`lerobot/scripts/lerobot_teleoperate.py` line `209`).
 - `dt: 5.12 (195.1hz)` which is the "delta time" or the number of milliseconds spent between the previous call to `robot.teleop_step()` and the current one, associated with the frequency (5.12 ms equals 195.1 Hz) ; note that you can control the maximum frequency by adding fps as argument such as `--fps 30`.
 - `dtRlead: 4.93 (203.0hz)` which is the number of milliseconds it took to read the position of the leader arm using `leader_arm.read("Present_Position")`.
 - `dtWfoll: 0.22 (4446.9hz)` which is the number of milliseconds it took to set a new goal position for the follower arm using `follower_arm.write("Goal_position", leader_pos)` ; note that writing is done asynchronously so it takes less time than reading.
 
 Importantly: If you don't have any camera, you can remove them dynamically with this [draccus](https://github.com/dlwh/draccus) syntax `--robot.cameras='{}'`:
 ```bash
-python lerobot/scripts/control_robot.py \
+python lerobot/scripts/lerobot_teleoperate.py \
   --robot.type=koch \
   --robot.cameras='{}' \
   --control.type=teleoperate
@@ -764,7 +764,7 @@ Importantly, many utilities are still missing. For instance, if you have cameras
 
 ### a. Use the `record` function
 
-You can use the `record` function from [`lerobot/scripts/control_robot.py`](../lerobot/scripts/control_robot.py) to achieve efficient data recording. It encompasses many recording utilities:
+You can use the `record` function from [`lerobot/scripts/lerobot_teleoperate.py`](../lerobot/scripts/lerobot_teleoperate.py) to achieve efficient data recording. It encompasses many recording utilities:
 1. Frames from cameras are saved on disk in threads, and encoded into videos at the end of each episode recording.
 2. Video streams from cameras are displayed in window so that you can verify them.
 3. Data is stored with [`LeRobotDataset`](../lerobot/common/datasets/lerobot_dataset.py) format which is pushed to your Hugging Face page (unless `--control.push_to_hub=false` is provided).
@@ -793,7 +793,7 @@ If you don't want to push to hub, use `--control.push_to_hub=false`.
 
 Now run this to record 2 episodes:
 ```bash
-python lerobot/scripts/control_robot.py \
+python lerobot/scripts/lerobot_teleoperate.py \
   --robot.type=koch \
   --control.type=record \
   --control.single_task="Grasp a lego block and put it in the bin." \
@@ -818,7 +818,7 @@ INFO 2024-08-10 15:02:58 ol_robot.py:219 dt:33.34 (30.0hz) dtRlead: 5.06 (197.5h
 ```
 It contains:
 - `2024-08-10 15:02:58` which is the date and time of the call to the print function,
-- `ol_robot.py:219` which is the end of the file name and the line number where the print function is called  (`lerobot/scripts/control_robot.py` line `219`).
+- `ol_robot.py:219` which is the end of the file name and the line number where the print function is called  (`lerobot/scripts/lerobot_teleoperate.py` line `219`).
 - `dt:33.34 (30.0hz)` which is the "delta time" or the number of milliseconds spent between the previous call to `robot.teleop_step(record_data=True)` and the current one, associated with the frequency (33.34 ms equals 30.0 Hz) ; note that we use `--fps 30` so we expect 30.0 Hz ; when a step takes more time, the line appears in yellow.
 - `dtRlead: 5.06 (197.5hz)` which is the delta time of reading the present position of the leader arm.
 - `dtWfoll: 0.25 (3963.7hz)` which is the delta time of writing the goal position on the follower arm ; writing is asynchronous so it takes less time than reading.
@@ -866,11 +866,11 @@ This will launch a local web server that looks like this:
 
 ### d. Replay episode on your robot with the `replay` function
 
-A useful feature of [`lerobot/scripts/control_robot.py`](../lerobot/scripts/control_robot.py) is the `replay` function, which allows to replay on your robot any episode that you've recorded or episodes from any dataset out there. This function helps you test the repeatability of your robot's actions and assess transferability across robots of the same model.
+A useful feature of [`lerobot/scripts/lerobot_teleoperate.py`](../lerobot/scripts/lerobot_teleoperate.py) is the `replay` function, which allows to replay on your robot any episode that you've recorded or episodes from any dataset out there. This function helps you test the repeatability of your robot's actions and assess transferability across robots of the same model.
 
 To replay the first episode of the dataset you just recorded, run the following command:
 ```bash
-python lerobot/scripts/control_robot.py \
+python lerobot/scripts/lerobot_teleoperate.py \
   --robot.type=koch \
   --control.type=replay \
   --control.fps=30 \
@@ -884,9 +884,9 @@ Your robot should replicate movements similar to those you recorded. For example
 
 ### a. Use the `train` script
 
-To train a policy to control your robot, use the [`python lerobot/scripts/train.py`](../lerobot/scripts/train.py) script. A few arguments are required. Here is an example command:
+To train a policy to control your robot, use the [`python lerobot/scripts/lerobot_train.py`](../lerobot/scripts/lerobot_train.py) script. A few arguments are required. Here is an example command:
 ```bash
-python lerobot/scripts/train.py \
+python lerobot/scripts/lerobot_train.py \
   --dataset.repo_id=${HF_USER}/koch_test \
   --policy.type=act \
   --output_dir=outputs/train/act_koch_test \
@@ -967,9 +967,9 @@ for _ in range(inference_time_s * fps):
 
 Ideally, when controlling your robot with your neural network, you would want to record evaluation episodes and to be able to visualize them later on, or even train on them like in Reinforcement Learning. This pretty much corresponds to recording a new dataset but with a neural network providing the actions instead of teleoperation.
 
-To this end, you can use the `record` function from [`lerobot/scripts/control_robot.py`](../lerobot/scripts/control_robot.py) but with a policy checkpoint as input. For instance, run this command to record 10 evaluation episodes:
+To this end, you can use the `record` function from [`lerobot/scripts/lerobot_teleoperate.py`](../lerobot/scripts/lerobot_teleoperate.py) but with a policy checkpoint as input. For instance, run this command to record 10 evaluation episodes:
 ```bash
-python lerobot/scripts/control_robot.py \
+python lerobot/scripts/lerobot_teleoperate.py \
   --robot.type=koch \
   --control.type=record \
   --control.fps=30 \
@@ -991,7 +991,7 @@ As you can see, it's almost the same command as previously used to record your t
 
 You can then visualize your evaluation dataset by running the same command as before but with the new inference dataset as argument:
 ```bash
-python lerobot/scripts/visualize_dataset.py \
+python lerobot/scripts/lerobot_dataset_viz.py \
   --repo-id ${HF_USER}/eval_act_koch_test
 ```
 

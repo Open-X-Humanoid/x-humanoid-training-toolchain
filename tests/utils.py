@@ -23,11 +23,11 @@ import pytest
 import torch
 
 from lerobot import available_cameras, available_motors, available_robots
-from lerobot.common.robot_devices.cameras.utils import Camera
-from lerobot.common.robot_devices.cameras.utils import make_camera as make_camera_device
-from lerobot.common.robot_devices.motors.utils import MotorsBus
-from lerobot.common.robot_devices.motors.utils import make_motors_bus as make_motors_bus_device
-from lerobot.common.utils.import_utils import is_package_available
+from lerobot.cameras.utils import Camera
+from lerobot.cameras.utils import make_camera as make_camera_device
+from lerobot.motors.utils import MotorsBus
+from lerobot.motors.utils import make_motors_bus as make_motors_bus_device
+from lerobot.utils.import_utils import is_package_available
 
 DEVICE = os.environ.get("LEROBOT_TEST_DEVICE", "cuda") if torch.cuda.is_available() else "cpu"
 

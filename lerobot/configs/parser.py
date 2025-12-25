@@ -16,17 +16,16 @@ import inspect
 import pkgutil
 import sys
 from argparse import ArgumentError
+from collections.abc import Sequence
 from functools import wraps
 from pathlib import Path
-from typing import Sequence
 
 import draccus
 
-from lerobot.common.utils.utils import has_method
+from lerobot.utils.utils import has_method
 
 PATH_KEY = "path"
 PLUGIN_DISCOVERY_SUFFIX = "discover_packages_path"
-draccus.set_config_type("json")
 
 
 def get_cli_overrides(field_name: str, args: Sequence[str] | None = None) -> list[str] | None:
@@ -77,9 +76,8 @@ def parse_plugin_args(plugin_arg_suffix: str, args: Sequence[str]) -> dict:
             - Values are the corresponding argument values
 
     Example:
-        >>> args = ['--env.discover_packages_path=my_package',
-        ...         '--other_arg=value']
-        >>> parse_plugin_args('discover_packages_path', args)
+        >>> args = ["--env.discover_packages_path=my_package", "--other_arg=value"]
+        >>> parse_plugin_args("discover_packages_path", args)
         {'env.discover_packages_path': 'my_package'}
     """
     plugin_args = {}
@@ -112,7 +110,7 @@ def load_plugin(plugin_path: str) -> None:
         PluginLoadError: If the plugin cannot be loaded due to import errors or if the package path is invalid.
 
     Examples:
-        >>> load_plugin("external_plugin.core")       # Loads plugin from external package
+        >>> load_plugin("external_plugin.core")  # Loads plugin from external package
 
     Notes:
         - The plugin package should handle its own registration during import

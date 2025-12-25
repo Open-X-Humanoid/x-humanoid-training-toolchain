@@ -43,7 +43,7 @@ Follow steps 1 of the [assembly video](https://www.youtube.com/watch?v=DA91NJOtM
 **Find USB ports associated to your arms**
 To find the correct ports for each arm, run the utility script twice:
 ```bash
-python lerobot/scripts/find_motors_bus_port.py
+python lerobot/scripts/lerobot_find_port.py
 ```
 
 Example output when identifying the leader arm's port (e.g., `/dev/tty.usbmodem575E0031751` on Mac, or possibly `/dev/ttyACM0` on Linux):
@@ -127,7 +127,7 @@ class MossRobotConfig(ManipulatorRobotConfig):
 **Configure your motors**
 Plug your first motor and run this script to set its ID to 1. It will also set its present position to 2048, so expect your motor to rotate:
 ```bash
-python lerobot/scripts/configure_motor.py \
+python lerobot/scripts/lerobot_setup_motors.py \
   --port /dev/tty.usbmodem58760432961 \
   --brand feetech \
   --model sts3215 \
@@ -139,7 +139,7 @@ Note: These motors are currently limitated. They can take values between 0 and 4
 
 Then unplug your motor and plug the second motor and set its ID to 2.
 ```bash
-python lerobot/scripts/configure_motor.py \
+python lerobot/scripts/lerobot_setup_motors.py \
   --port /dev/tty.usbmodem58760432961 \
   --brand feetech \
   --model sts3215 \
@@ -175,7 +175,7 @@ You will need to move the follower arm to these positions sequentially:
 
 Make sure both arms are connected and run this script to launch manual calibration:
 ```bash
-python lerobot/scripts/control_robot.py \
+python lerobot/scripts/lerobot_teleoperate.py \
   --robot.type=moss \
   --robot.cameras='{}' \
   --control.type=calibrate \
@@ -191,7 +191,7 @@ Follow step 6 of the [assembly video](https://www.youtube.com/watch?v=DA91NJOtMi
 
 Run this script to launch manual calibration:
 ```bash
-python lerobot/scripts/control_robot.py \
+python lerobot/scripts/lerobot_teleoperate.py \
   --robot.type=moss \
   --robot.cameras='{}' \
   --control.type=calibrate \
@@ -203,7 +203,7 @@ python lerobot/scripts/control_robot.py \
 **Simple teleop**
 Then you are ready to teleoperate your robot! Run this simple script (it won't connect and display the cameras):
 ```bash
-python lerobot/scripts/control_robot.py \
+python lerobot/scripts/lerobot_teleoperate.py \
   --robot.type=moss \
   --robot.cameras='{}' \
   --control.type=teleoperate
@@ -213,7 +213,7 @@ python lerobot/scripts/control_robot.py \
 **Teleop with displaying cameras**
 Follow [this guide to setup your cameras](https://github.com/huggingface/lerobot/blob/main/examples/7_get_started_with_real_robot.md#c-add-your-cameras-with-opencvcamera). Then you will be able to display the cameras on your computer while you are teleoperating by running the following code. This is useful to prepare your setup before recording your first dataset.
 ```bash
-python lerobot/scripts/control_robot.py \
+python lerobot/scripts/lerobot_teleoperate.py \
   --robot.type=moss \
   --control.type=teleoperate
 ```
@@ -235,7 +235,7 @@ echo $HF_USER
 
 Record 2 episodes and upload your dataset to the hub:
 ```bash
-python lerobot/scripts/control_robot.py \
+python lerobot/scripts/lerobot_teleoperate.py \
   --robot.type=moss \
   --control.type=record \
   --control.fps=30 \
@@ -269,7 +269,7 @@ python lerobot/scripts/visualize_dataset_html.py \
 
 Now try to replay the first episode on your robot:
 ```bash
-python lerobot/scripts/control_robot.py \
+python lerobot/scripts/lerobot_teleoperate.py \
   --robot.type=moss \
   --control.type=replay \
   --control.fps=30 \
@@ -279,9 +279,9 @@ python lerobot/scripts/control_robot.py \
 
 ## Train a policy
 
-To train a policy to control your robot, use the [`python lerobot/scripts/train.py`](../lerobot/scripts/train.py) script. A few arguments are required. Here is an example command:
+To train a policy to control your robot, use the [`python lerobot/scripts/lerobot_train.py`](../lerobot/scripts/lerobot_train.py) script. A few arguments are required. Here is an example command:
 ```bash
-python lerobot/scripts/train.py \
+python lerobot/scripts/lerobot_train.py \
   --dataset.repo_id=${HF_USER}/moss_test \
   --policy.type=act \
   --output_dir=outputs/train/act_moss_test \
@@ -300,9 +300,9 @@ Training should take several hours. You will find checkpoints in `outputs/train/
 
 ## Evaluate your policy
 
-You can use the `record` function from [`lerobot/scripts/control_robot.py`](../lerobot/scripts/control_robot.py) but with a policy checkpoint as input. For instance, run this command to record 10 evaluation episodes:
+You can use the `record` function from [`lerobot/scripts/lerobot_teleoperate.py`](../lerobot/scripts/lerobot_teleoperate.py) but with a policy checkpoint as input. For instance, run this command to record 10 evaluation episodes:
 ```bash
-python lerobot/scripts/control_robot.py \
+python lerobot/scripts/lerobot_teleoperate.py \
   --robot.type=moss \
   --control.type=record \
   --control.fps=30 \

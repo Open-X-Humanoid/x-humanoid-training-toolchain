@@ -85,7 +85,7 @@ Serial Number = stretch-se3-3054
 **Calibrate (Optional)**
 Before operating Stretch, you need to [home](https://docs.hello-robot.com/0.3/getting_started/stretch_hardware_overview/#homing) it first. Be mindful about giving Stretch some space as this procedure will move the robot's arm and gripper. Now run this command:
 ```bash
-python lerobot/scripts/control_robot.py \
+python lerobot/scripts/lerobot_teleoperate.py \
     --robot.type=stretch \
     --control.type=calibrate
 ```
@@ -98,7 +98,7 @@ Before trying teleoperation, you need activate the gamepad controller by pressin
 
 Now try out teleoperation (see above documentation to learn about the gamepad controls):
 ```bash
-python lerobot/scripts/control_robot.py \
+python lerobot/scripts/lerobot_teleoperate.py \
     --robot.type=stretch \
     --control.type=teleoperate
 ```
@@ -120,7 +120,7 @@ echo $HF_USER
 
 Record one episode:
 ```bash
-python lerobot/scripts/control_robot.py \
+python lerobot/scripts/lerobot_teleoperate.py \
   --robot.type=stretch \
   --control.type=record \
   --control.fps=30 \
@@ -139,7 +139,7 @@ python lerobot/scripts/control_robot.py \
 **Replay an episode**
 Now try to replay this episode (make sure the robot's initial position is the same):
 ```bash
-python lerobot/scripts/control_robot.py \
+python lerobot/scripts/lerobot_teleoperate.py \
   --robot.type=stretch \
   --control.type=replay \
   --control.fps=30 \

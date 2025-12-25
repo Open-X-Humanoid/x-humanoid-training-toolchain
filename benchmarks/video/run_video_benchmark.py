@@ -36,7 +36,7 @@ from skimage.metrics import mean_squared_error, peak_signal_noise_ratio, structu
 from tqdm import tqdm
 
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.common.datasets.video_utils import (
+from lerobot.datasets.video_utils import (
     decode_video_frames_torchvision,
     encode_video_frames,
 )

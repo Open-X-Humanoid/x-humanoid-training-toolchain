@@ -13,7 +13,7 @@
 This project provides a training toolchain for adapting TienKung humanoid robots and RoboMIND dataset with the open-source LeRobot framework. It enables users to  facilitates development using RoboMIND dataset and train embodied manipulation models for TienKung robots based on the Lerobot. This project lowers the barrier to entry for developing embodied manipulations while expanding the ecosystem of RoboMIND and TienKung robots.
 
 - Support for RoboMIND, an open source multi-ontology dataset
-- Compatibility with lerobotDataset V2.1
+- Upgraded to LeRobotDataset V3.0 with improved data structure and performance
 - Training pipelines for TienKung robots' embodied manipulation
 - Future roadmap for ecosystem development of RoboMIND/Huisikaiwu/TienKung
 
@@ -80,7 +80,7 @@ With the configuration file prepared, initiate training by running the command:
 
 ```
 export HF_LEROBOT_HOME=PATH_TO_LEROBOT_HOME
-python lerobot/scripts/train.py --config_path=PATH_TO_CONFIG
+python lerobot/scripts/lerobot_train.py --config_path=PATH_TO_CONFIG
 
 ```
 
@@ -89,7 +89,7 @@ python lerobot/scripts/train.py --config_path=PATH_TO_CONFIG
 Dataset visualization is performed using LeRobot's built-in visualization scripts.
 
 ```
-python lerobot/scripts/visualize_dataset.py --repo-id ID --episode-index 0 --root PATH_TO_ROOT
+python lerobot/scripts/lerobot_dataset_viz.py --repo-id ID --episode-index 0 --root PATH_TO_ROOT
 
 ```
 

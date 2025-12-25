@@ -145,7 +145,7 @@ Both config files on the LeKiwi LeRobot and on the laptop should be the same. Fi
 
 To find the port for each bus servo adapter, run the utility script:
 ```bash
-python lerobot/scripts/find_motors_bus_port.py
+python lerobot/scripts/lerobot_find_port.py
 ```
 
 #### b. Example outputs
@@ -366,7 +366,7 @@ You will need to move the follower arm to these positions sequentially:
 
 Make sure the arm is connected to the Raspberry Pi and run this script (on the Raspberry Pi) to launch manual calibration:
 ```bash
-python lerobot/scripts/control_robot.py \
+python lerobot/scripts/lerobot_teleoperate.py \
   --robot.type=lekiwi \
   --robot.cameras='{}' \
   --control.type=calibrate \
@@ -385,7 +385,7 @@ Then to calibrate the leader arm (which is attached to the laptop/pc). You will 
 
 Run this script (on your laptop/pc) to launch manual calibration:
 ```bash
-python lerobot/scripts/control_robot.py \
+python lerobot/scripts/lerobot_teleoperate.py \
   --robot.type=lekiwi \
   --robot.cameras='{}' \
   --control.type=calibrate \
@@ -399,14 +399,14 @@ python lerobot/scripts/control_robot.py \
 
 To teleoperate SSH into your Raspberry Pi, and run `conda activate lerobot` and this script:
 ```bash
-python lerobot/scripts/control_robot.py \
+python lerobot/scripts/lerobot_teleoperate.py \
   --robot.type=lekiwi \
   --control.type=remote_robot
 ```
 
 Then on your laptop, also run `conda activate lerobot` and this script:
 ```bash
-python lerobot/scripts/control_robot.py \
+python lerobot/scripts/lerobot_teleoperate.py \
   --robot.type=lekiwi \
   --control.type=teleoperate \
   --control.fps=30
@@ -477,7 +477,7 @@ Once you're familiar with teleoperation, you can record your first dataset with 
 
 To start the program on LeKiwi, SSH into your Raspberry Pi, and run `conda activate lerobot` and this script:
 ```bash
-python lerobot/scripts/control_robot.py \
+python lerobot/scripts/lerobot_teleoperate.py \
   --robot.type=lekiwi \
   --control.type=remote_robot
 ```
@@ -494,7 +494,7 @@ echo $HF_USER
 ```
 On your laptop then run this command to record 2 episodes and upload your dataset to the hub:
 ```bash
-python lerobot/scripts/control_robot.py \
+python lerobot/scripts/lerobot_teleoperate.py \
   --robot.type=lekiwi \
   --control.type=record \
   --control.fps=30 \
@@ -530,7 +530,7 @@ python lerobot/scripts/visualize_dataset_html.py \
 # I. Replay an episode
 Now try to replay the first episode on your robot:
 ```bash
-python lerobot/scripts/control_robot.py \
+python lerobot/scripts/lerobot_teleoperate.py \
   --robot.type=lekiwi \
   --control.type=replay \
   --control.fps=30 \
@@ -540,9 +540,9 @@ python lerobot/scripts/control_robot.py \
 
 ## J. Train a policy
 
-To train a policy to control your robot, use the [`python lerobot/scripts/train.py`](../lerobot/scripts/train.py) script. A few arguments are required. Here is an example command:
+To train a policy to control your robot, use the [`python lerobot/scripts/lerobot_train.py`](../lerobot/scripts/lerobot_train.py) script. A few arguments are required. Here is an example command:
 ```bash
-python lerobot/scripts/train.py \
+python lerobot/scripts/lerobot_train.py \
   --dataset.repo_id=${HF_USER}/lekiwi_test \
   --policy.type=act \
   --output_dir=outputs/train/act_lekiwi_test \
@@ -561,9 +561,9 @@ Training should take several hours. You will find checkpoints in `outputs/train/
 
 ## K. Evaluate your policy
 
-You can use the `record` function from [`lerobot/scripts/control_robot.py`](../lerobot/scripts/control_robot.py) but with a policy checkpoint as input. For instance, run this command to record 10 evaluation episodes:
+You can use the `record` function from [`lerobot/scripts/lerobot_teleoperate.py`](../lerobot/scripts/lerobot_teleoperate.py) but with a policy checkpoint as input. For instance, run this command to record 10 evaluation episodes:
 ```bash
-python lerobot/scripts/control_robot.py \
+python lerobot/scripts/lerobot_teleoperate.py \
   --robot.type=lekiwi \
   --control.type=record \
   --control.fps=30 \
