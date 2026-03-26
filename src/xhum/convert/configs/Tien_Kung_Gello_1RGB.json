@@ -1,0 +1,17 @@
+{
+    "observation.images.camera_top": {
+        "dtype": "video",
+        "shape": [360, 640, 3],
+        "names": ["height", "width", "channels"]
+    },
+    "observation.state": {
+        "dtype": "float32",
+        "shape": [16],
+        "names": null
+    },
+    "action": {
+        "dtype": "float32",
+        "shape": [16],
+        "names": null
+    }
+}
