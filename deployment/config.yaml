@@ -1,0 +1,18 @@
+# ROS2 Inspire Policy Agent Configuration
+# Mode: 'model' for model inference, 'replay' for HDF5 action replay
+
+# Operation mode: 'model' or 'replay'
+mode: 'model'  # Change to 'replay' to use HDF5 action replay
+
+# Model inference configuration (used when mode='model')
+model_path: '/home/ubuntu/neil/pick_up_apple/checkpoints/300000/pretrained_model'
+
+# HDF5 replay configuration (used when mode='replay')
+h5_path: '/media/jushen/neil-liu/dataNmodels/h5_data/trajectory.hdf5'
+
+# Camera configuration
+camera_name: 'camera'
+
+# Action publishing rate (Hz)
+action_rate: 20.0
+

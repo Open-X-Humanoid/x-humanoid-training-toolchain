@@ -40,3 +40,63 @@ def publish_action(self, action):
 ```
 
  
+
+
+ # Deployment Scripts
+
+- `ros2_inspire_config.py`: Deployment script for robots using **Inspire** hands.
+- `ros2_brainco_config.py`: Deployment script for robots using **BrainCo** hands.
+
+## Usage
+
+Both scripts support a YAML configuration file to define runtime parameters.
+
+### Execution Command
+
+```bash
+# For Inspire hand robots
+python3 ros2_inspire_config.py --config config.yaml
+
+# For BrainCo hand robots
+python3 ros2_brainco_config.py --config config.yaml
+```
+
+If the `--config` parameter is omitted, scripts default to `config.yaml` in the current directory.
+
+## Configuration File
+
+### Configuration Guide (YAML)
+
+The configuration file allows switching between model inference and data replay modes, and configuring hardware-specific parameters.
+
+```yaml
+# Mode: 'model' (for real-time inference) or 'replay' (for trajectory playback)
+mode: 'model'
+
+# --- Model Inference Mode ---
+# Path to the pretrained model
+model_path: '/path/to/your/pretrained_model'
+
+# --- Data Replay Mode ---
+# Path to the HDF5 trajectory file
+h5_path: '/path/to/your/trajectory.hdf5'
+
+# --- General Configuration ---
+# Camera name (used for image topics like /{camera_name}/color/image_raw)
+camera_name: 'camera'
+# Action publishing rate (Hz)
+action_rate: 20.0
+
+```
+
+## Operation Modes
+
+1.  **Model Inference (`model`)**:
+    - Loads the specified strategy model.
+    - Synchronizes RGB and Depth image streams.
+    - Performs real-time inference and publishes joint actions to arm and hand controllers.
+
+2.  **Data Replay (`replay`)**:
+    - Reads action sequences from the specified HDF5 file.
+    - Streams actions to hardware at the specified `action_rate`.
+    - Useful for verifying hardware communication and trajectory execution.
