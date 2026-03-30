@@ -1,5 +1,5 @@
 
-# x-humanoid training toolchain
+# x-humanoid training toolchain (xhum)
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-yellow.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Project Page](https://img.shields.io/badge/Project%20Page-RoboMIND-blue.svg)](https://x-humanoid-robomind.github.io/)
@@ -7,113 +7,225 @@
 [![Dataset](https://img.shields.io/badge/Dataset-flopsera-000000.svg)](http://open.flopsera.com/flopsera-open/data-details/RoboMIND)
 [![Hugging Face](https://img.shields.io/badge/Hugging_Face-RoboMIND-000000.svg)](https://huggingface.co/datasets/x-humanoid-robomind/RoboMIND)
 
-**[简体中文](./README_zh.md)｜English**
+Training and deployment toolchain for TienKung humanoid robots, built on [LeRobot](https://github.com/huggingface/lerobot) (included as a git submodule). The custom toolchain code (`xhum`) is fully decoupled from the upstream LeRobot codebase.
 
-
-This project provides a training toolchain for adapting TienKung humanoid robots and RoboMIND dataset with the open-source LeRobot framework. It enables users to  facilitates development using RoboMIND dataset and train embodied manipulation models for TienKung robots based on the Lerobot. This project lowers the barrier to entry for developing embodied manipulations while expanding the ecosystem of RoboMIND and TienKung robots.
-
-- Support for RoboMIND, an open source multi-ontology dataset
-- Compatibility with lerobotDataset V2.1
-- Training pipelines for TienKung robots' embodied manipulation
-- Future roadmap for ecosystem development of RoboMIND/Huisikaiwu/TienKung
-
-
-<table><tbody>
-
-<table class="table table-striped table-bordered table-vcenter"/>
-    <tbody>
-    <tr><th> Title </th> <th>Description</th>
-    <tr>
-       <td align="center" > <a href="https://github.com/x-humanoid-robomind/x-humanoid-robomind.github.io">RoboMIND</a></td>
-        <td>  a comprehensive dataset featuring 107k real-world demonstration trajectories spanning 479 distinct tasks and involving 96 unique object classes.<br></a></td>
-     <tr>
-         <td align="center" > <a href="https://github.com/x-humanoid-robomind/TienKung_URDF">TienKung_URDF</a></td>
-        <td>urdf publish is the URDF package for Tien Kung,which includes complete robot description files (URDF) and mesh files(STL), defining core parameters such as mechanical structure, joint limits,and mass distribution.lt supports motion planning and control algorithmverification in the ROS environment and Gazebo simulation platform.<br></a></td>
-    </tr>
-     <tr>
-          <td align="center" > <a href="https://github.com/x-humanoid-robomind/TienKung_ROS">TienKung_ROS</a></td>
-        <td>The Tien Kung software system, developed based on the ROS frameworkis the low-level implementation directly responsible for hardware controlincluding key modules such as body control (body_control), robot description (robot_description), andremote control communication (usb sbus), responsible for the basic motioncontrol and hardware driving of the robot.<br></a></td>
-    </tr>
-    <tr>
-          <td align="center" > <a href="https://github.com/x-humanoid-robomind/TienKung_Docs">TienKung_Docs</a></td>
-        <td> User manuals and SDK documentation for the TienKung, including both the Lite and Pro versions, covering robot unboxing, daily usage, maintenance guidelines, and SDK interface instructions.<br></a></td>
-    </tr>
-    </tr>
-    </tbody>
-</table>
-
-## Usage Instructions
-
-This step converts HDF5-formatted data into the LeRobotDataset format by parsing structured observations (RGB images, joints, etc.).
+## Project Structure
 
 ```
-
-cd scripts
-sh convert.sh #Modify the path and args. 
-
+x-humanoid-training-toolchain/
+├── lerobot/                           # Git submodule -> huggingface/lerobot (v0.5.1)
+├── src/xhum/                          # Custom toolchain (decoupled from lerobot)
+│   ├── convert/
+│   │   ├── hdf5_to_lerobot.py         # HDF5 -> LeRobot V3 dataset converter
+│   │   ├── convert.sh                 # Conversion example script
+│   │   └── configs/                   # Dataset conversion configs
+│   ├── train/
+│   │   └── configs/                   # Training configs (for lerobot-train)
+│   └── deployment/
+│       ├── policy_agent.py            # Policy inference wrapper
+│       ├── ros2_brainco.py            # ROS2 node for BrainCo hands
+│       └── ros2_inspire.py            # ROS2 node for Inspire hands
+├── pyproject.toml
+└── Makefile
 ```
 
+## Installation
+
+### Prerequisites
+
+- Python >= 3.12
+- Git
+- (Optional) CUDA-compatible GPU for training
+- (Optional) ROS2 Humble/Iron for deployment
+
+### Clone and install
+
+```bash
+git clone --recurse-submodules https://github.com/Open-X-Humanoid/x-humanoid-training-toolchain.git
+cd x-humanoid-training-toolchain
+make install
 ```
 
---config
-Description: Path to the configuration JSON file containing settings for the application.
---repo_id
-Description: ID for the dataset.
---src_root
-Description: Source directory containing raw input data files.
---tgt_path
-Description: Target directory path for processed output files.
---task_name
-Description: Identifier for the current processing task.
---fps
-Description: Frames per second setting for video processing operations.
---robot_type
-Description: Identifier for robot hardware platform.
+If you already cloned without `--recurse-submodules`:
+
+```bash
+git submodule update --init --recursive
+```
+
+`make install` runs two steps:
+
+```bash
+pip install -e ./lerobot    # LeRobot from submodule
+pip install -e .            # xhum toolchain
+```
+
+### Verify installation
+
+```bash
+xhum-convert --help
+xhum-train --help
+```
+
+### Update LeRobot submodule
+
+```bash
+make update-lerobot
+make install-lerobot
+```
+
+## Data Conversion
+
+Convert HDF5 episode data into LeRobot V3 dataset format using `xhum-convert`.
+
+### Source data layout
+
+The converter expects a source directory containing episode subdirectories, each with an HDF5 file at a fixed relative path:
 
 ```
+src_root/
+├── episode_001/
+│   └── data/trajectory.hdf5
+├── episode_002/
+│   └── data/trajectory.hdf5
+└── episode_003/
+    └── data/trajectory.hdf5
+```
+
+The relative path to the HDF5 file (default `data/trajectory.hdf5`) is configured via the `episode_path` field in the config JSON.
+
+### Conversion config
+
+A JSON config file defines the dataset metadata, output features, and HDF5-to-feature mappings. Example (`configs/dvt217_stack_cube.json`):
+
+```json
+{
+    "dataset": {
+        "fps": 30,
+        "robot_type": "tienkung"
+    },
+    "episode_path": "data/trajectory.hdf5",
+    "features": {
+        "observation.state": {
+            "dtype": "float32",
+            "shape": [26],
+            "names": null
+        },
+        "action": {
+            "dtype": "float32",
+            "shape": [16],
+            "names": null
+        },
+        "observation.images.camera": {
+            "dtype": "video",
+            "shape": [360, 640, 3],
+            "names": ["height", "width", "channels"]
+        }
+    },
+    "mappings": [
+        {
+            "hdf5_key": "puppet/joint_position",
+            "feature_key": "observation.state"
+        },
+        {
+            "hdf5_key": "master/joint_position",
+            "feature_key": "action"
+        },
+        {
+            "hdf5_key": "observations/rgb_images/camera_camera",
+            "feature_key": "observation.images.camera",
+            "decode": "jpeg",
+            "resize": [640, 360]
+        }
+    ]
+}
+```
+
+**Config fields:**
+
+| Field | Description |
+|---|---|
+| `dataset.fps` | Frame rate of the recorded data |
+| `dataset.robot_type` | Robot identifier string |
+| `episode_path` | Relative path from episode directory to HDF5 file |
+| `features` | Output feature definitions (dtype, shape) following LeRobot V3 schema |
+| `mappings[].hdf5_key` | Key path inside the HDF5 file |
+| `mappings[].feature_key` | Corresponding output feature name |
+| `mappings[].decode` | Set to `"jpeg"` / `"png"` / `"image"` for compressed image data |
+| `mappings[].resize` | Optional `[width, height]` to resize decoded images |
+| `mappings[].slice` | Optional `[start, end]` to slice array columns |
+
+### Run conversion
+
+```bash
+xhum-convert \
+  --config src/xhum/convert/configs/dvt217_stack_cube.json \
+  --repo_id dvt217_stack_cube \
+  --src_root /path/to/hdf5/episodes \
+  --tgt_path /path/to/output \
+  --task_name stack_cube
+```
+
+| Argument | Description |
+|---|---|
+| `--config` | Path to conversion config JSON |
+| `--repo_id` | Output dataset name (created as `<tgt_path>/<repo_id>/`) |
+| `--src_root` | Directory containing episode subdirectories |
+| `--tgt_path` | Parent directory for the output dataset |
+| `--task_name` | Task label stored with each frame (default: `default_task`) |
+
+### Output format
+
+The converted dataset follows LeRobot V3 layout:
+
+```
+<tgt_path>/<repo_id>/
+├── meta/
+│   ├── info.json              # Dataset metadata (fps, features, totals)
+│   ├── stats.json             # Per-feature statistics
+│   ├── tasks.parquet          # Task definitions
+│   └── episodes/              # Per-episode metadata
+├── data/
+│   └── chunk-000/
+│       └── file-000.parquet   # Numeric features (state, action, indices)
+└── videos/
+    └── observation.images.*/
+        └── chunk-000/
+            └── file-000.mp4   # Video data (multiple episodes per chunk)
+```
+
+Note: multiple episodes are stored in the same chunk file and distinguished by timestamp ranges in the episode metadata. This is normal LeRobot V3 behavior.
+
 ## Training
-After converting the dataset to LeRobotDataset format, users can train models using the following workflow:
-- Configuration setup
-Create a train_config.json file to specify the dataset path, training algorithm (e.g., ACT or Diffusion Policy), hyperparameters (learning rate, batch size), and other relevant parameters.
-- Training process
-With the configuration file prepared, initiate training by running the command:
 
-```
-export HF_LEROBOT_HOME=PATH_TO_LEROBOT_HOME
-python lerobot/scripts/train.py --config_path=PATH_TO_CONFIG
+Train an ACT policy on a converted dataset using LeRobot's built-in CLI:
 
+```bash
+lerobot-train --config_path=src/xhum/train/configs/act_tienkung.json
 ```
 
-## Visualization
+The training config (`act_tienkung.json`) defines dataset, policy architecture, optimizer, and logging settings. Key fields to update before running:
 
-Dataset visualization is performed using LeRobot's built-in visualization scripts.
+| Field | Description |
+|---|---|
+| `dataset.repo_id` | Name of the converted dataset |
+| `dataset.root` | Path to the dataset directory (or set `HF_LEROBOT_HOME` env var) |
+| `output_dir` | Directory for checkpoints and logs |
+| `policy.input_features` | Must match the features in your conversion config |
+| `policy.output_features` | Action feature shape |
 
-```
-python lerobot/scripts/visualize_dataset.py --repo-id ID --episode-index 0 --root PATH_TO_ROOT
+Checkpoints are saved in HuggingFace `from_pretrained`-compatible format, ready for deployment with `PolicyAgent`.
 
-```
 
-<div style="display: flex;">
-  <img src="./static/demo1.gif" width="300">
-  <img src="./static/demo2.gif" width="300">
-</div>
-</div>
 
-<div style="display: flex;">
-  <img src="./static/demo3.gif" width="300">
-  <img src="./static/demo4.gif" width="300">
-</div>
-</div>
+## Related Projects
 
-## Roadmap
-- Integrate more state-of-the-art robotic algorithms.
-- Support for TienKung series embodied manipulation.
+| Project | Description |
+|---|---|
+| [RoboMIND](https://github.com/x-humanoid-robomind/x-humanoid-robomind.github.io) | 107k real-world trajectories, 479 tasks, 96 object classes |
+| [TienKung_URDF](https://github.com/x-humanoid-robomind/TienKung_URDF) | URDF package for ROS/Gazebo simulation |
+| [TienKung_ROS](https://github.com/x-humanoid-robomind/TienKung_ROS) | Low-level ROS hardware control |
+| [TienKung_Docs](https://github.com/x-humanoid-robomind/TienKung_Docs) | User manuals and SDK documentation |
 
 ## Acknowledgments
-RoboMIND and TienKung have adapted to the [Lerobot](https://github.com/huggingface/lerobot) framework. Thanks! 
 
-##  Discussions 
-If you're interested in RoboMIND, welcome to join our WeChat group for discussions.
-
-<img src="./static/qrcode.png" border=0 width=30%>
-
+Built on top of [LeRobot](https://github.com/huggingface/lerobot) by Hugging Face.

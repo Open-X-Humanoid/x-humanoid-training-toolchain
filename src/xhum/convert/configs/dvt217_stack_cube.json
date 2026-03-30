@@ -7,7 +7,7 @@
     "features": {
         "observation.state": {
             "dtype": "float32",
-            "shape": [16],
+            "shape": [26],
             "names": null
         },
         "action": {
@@ -15,7 +15,7 @@
             "shape": [16],
             "names": null
         },
-        "observation.images.camera_top": {
+        "observation.images.camera": {
             "dtype": "video",
             "shape": [360, 640, 3],
             "names": ["height", "width", "channels"]
@@ -31,8 +31,8 @@
             "feature_key": "action"
         },
         {
-            "hdf5_key": "observations/rgb_images/camera_top",
-            "feature_key": "observation.images.camera_top",
+            "hdf5_key": "observations/rgb_images/camera_camera",
+            "feature_key": "observation.images.camera",
             "decode": "jpeg",
             "resize": [640, 360]
         }
