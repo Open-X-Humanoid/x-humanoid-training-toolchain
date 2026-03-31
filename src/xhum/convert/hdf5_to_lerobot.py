@@ -7,7 +7,10 @@ All HDF5-to-feature mapping is driven by a JSON config file. See configs/ for ex
 import argparse
 import json
 import logging
+import os
 import shutil
+from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 from pathlib import Path
 
 import cv2
@@ -64,16 +67,33 @@ def _read_numeric(h5file: h5py.File, mapping: dict) -> np.ndarray:
     return data
 
 
-def _read_images(h5file: h5py.File, mapping: dict) -> np.ndarray:
-    """Read and decode compressed images from HDF5, with optional resize."""
+def _decode_image_buffer(buf: np.ndarray, resize: tuple[int, int] | None) -> np.ndarray:
+    img = cv2.imdecode(buf, cv2.IMREAD_COLOR)
+    if resize is not None:
+        img = cv2.resize(img, resize)
+    return img
+
+
+def _read_images(
+    h5file: h5py.File,
+    mapping: dict,
+    *,
+    decode_workers: int = 1,
+) -> np.ndarray:
+    """Read and decode compressed images from HDF5, with optional resize.
+
+    JPEG/PNG decode can run in parallel threads (decode_workers > 1). HDF5 bytes are
+    read sequentially first to avoid concurrent access on the same file handle.
+    """
     raw = h5file[mapping["hdf5_key"]]
     resize = tuple(mapping["resize"]) if "resize" in mapping else None
-    images = []
-    for img_bytes in raw:
-        img = cv2.imdecode(np.frombuffer(img_bytes, np.uint8), cv2.IMREAD_COLOR)
-        if resize is not None:
-            img = cv2.resize(img, resize)
-        images.append(img)
+    buffers = [np.frombuffer(img_bytes, np.uint8) for img_bytes in raw]
+    if decode_workers <= 1:
+        images = [_decode_image_buffer(b, resize) for b in buffers]
+    else:
+        decoder = partial(_decode_image_buffer, resize=resize)
+        with ThreadPoolExecutor(max_workers=decode_workers) as pool:
+            images = list(pool.map(decoder, buffers))
     return np.stack(images)
 
 
@@ -82,6 +102,8 @@ def process_episode(
     dataset: LeRobotDataset,
     task_name: str,
     mappings: list[dict],
+    *,
+    decode_workers: int = 1,
 ) -> bool:
     """Process a single HDF5 episode and add frames to dataset."""
     try:
@@ -91,7 +113,7 @@ def process_episode(
             for m in mappings:
                 fkey = m["feature_key"]
                 if m.get("decode") in ("jpeg", "png", "image"):
-                    loaded[fkey] = _read_images(h5file, m)
+                    loaded[fkey] = _read_images(h5file, m, decode_workers=decode_workers)
                 else:
                     loaded[fkey] = _read_numeric(h5file, m)
     except (FileNotFoundError, OSError, KeyError) as e:
@@ -117,7 +139,20 @@ def main():
     parser.add_argument("--src_root", type=str, required=True, help="Source data directory")
     parser.add_argument("--tgt_path", type=str, required=True, help="Target output directory")
     parser.add_argument("--task_name", type=str, default="default_task", help="Task name identifier")
+    parser.add_argument(
+        "--decode-workers",
+        type=int,
+        default=0,
+        help=(
+            "Thread count for parallel JPEG/PNG decode per episode (0 = auto: min(8, CPU count))."
+            " Does not parallelize LeRobot dataset writes; use 1 if memory is tight."
+        ),
+    )
     args = parser.parse_args()
+
+    decode_workers = args.decode_workers
+    if decode_workers <= 0:
+        decode_workers = min(8, (os.cpu_count() or 4))
 
     config = load_config(args.config)
     dataset = initialize_dataset(repo_id=args.repo_id, tgt_path=args.tgt_path, config=config)
@@ -126,10 +161,18 @@ def main():
     src_root = Path(args.src_root)
     episodes = sorted([ep for ep in src_root.iterdir() if ep.is_dir()])
 
-    logging.info(f"Start processing {len(episodes)} episodes...")
+    logging.info(
+        f"Start processing {len(episodes)} episodes (decode workers per episode: {decode_workers})..."
+    )
     for ep_dir in episodes:
         ep_path = ep_dir / episode_rel
-        if process_episode(ep_path, dataset, args.task_name, config["mappings"]):
+        if process_episode(
+            ep_path,
+            dataset,
+            args.task_name,
+            config["mappings"],
+            decode_workers=decode_workers,
+        ):
             dataset.save_episode()
             logging.info(f"Saved episode: {ep_dir.name}")
 
