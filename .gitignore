@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# User-local run scripts (keep *.example.sh as templates)
+src/xhum/train/run_train_native.sh
+src/xhum/convert/convert.sh
+
 # Logging
 logs
 tmp
