@@ -2,6 +2,13 @@
 """Convert HDF5 episode data to LeRobot Dataset V3.
 
 All HDF5-to-feature mapping is driven by a JSON config file. See configs/ for examples.
+
+Supported mapping features:
+  - ``hdf5_key``  — read a single HDF5 dataset.
+  - ``hdf5_keys`` — read and concatenate multiple HDF5 datasets along axis-1.
+  - ``slice``     — ``[start, end]`` column slice applied to each key.
+  - ``stats_override`` (top-level) — manually specify stats for any feature,
+    overriding the auto-computed values after all episodes are saved.
 """
 
 import argparse
@@ -31,7 +38,6 @@ def load_config(config_path: str) -> dict:
         if key not in config:
             raise ValueError(f"Config missing required section: '{key}'")
 
-    # Convert shape lists to tuples so they match numpy .shape comparisons
     for feat in config["features"].values():
         if isinstance(feat.get("shape"), list):
             feat["shape"] = tuple(feat["shape"])
@@ -58,8 +64,23 @@ def initialize_dataset(repo_id: str, tgt_path: str, config: dict) -> LeRobotData
     )
 
 
+def _read_single_key(h5file: h5py.File, key: str, slc: list | None = None) -> np.ndarray:
+    """Read one HDF5 dataset with optional column slice."""
+    data = np.array(h5file[key], dtype=np.float32)
+    if slc is not None:
+        data = data[:, slc[0]:slc[1]]
+    return data
+
+
 def _read_numeric(h5file: h5py.File, mapping: dict) -> np.ndarray:
-    """Read a numeric (state/action) field from HDF5, with optional slicing."""
+    """Read numeric field(s) from HDF5. Supports single key or concat of multiple keys."""
+    if "hdf5_keys" in mapping:
+        parts = []
+        slices = mapping.get("slices", [None] * len(mapping["hdf5_keys"]))
+        for key, slc in zip(mapping["hdf5_keys"], slices):
+            parts.append(_read_single_key(h5file, key, slc))
+        return np.concatenate(parts, axis=1)
+
     data = np.array(h5file[mapping["hdf5_key"]], dtype=np.float32)
     if "slice" in mapping:
         s = mapping["slice"]
@@ -131,6 +152,43 @@ def process_episode(
     return True
 
 
+def apply_stats_override(dataset_root: Path, overrides: dict) -> None:
+    """Patch stats.json with manually specified values.
+
+    ``overrides`` maps feature names to dicts of stat fields, e.g.::
+
+        {
+            "action": {
+                "mean": [0.1, 0.2, ...],
+                "std":  [1.0, 1.0, ...]
+            }
+        }
+
+    Only the stat fields present in the override are replaced; the rest are
+    kept from the auto-computed stats.
+    """
+    stats_path = dataset_root / "meta" / "stats.json"
+    if not stats_path.exists():
+        logging.warning(f"stats.json not found at {stats_path}, skipping override")
+        return
+
+    with open(stats_path, "r") as f:
+        stats = json.load(f)
+
+    for feature_key, override_fields in overrides.items():
+        if feature_key not in stats:
+            logging.warning(f"stats_override: feature '{feature_key}' not in stats.json, adding it")
+            stats[feature_key] = {}
+        for stat_name, value in override_fields.items():
+            stats[feature_key][stat_name] = value
+            logging.info(f"stats_override: {feature_key}.{stat_name} overridden ({len(value) if isinstance(value, list) else 1} values)")
+
+    with open(stats_path, "w") as f:
+        json.dump(stats, f, indent=4)
+
+    logging.info(f"stats.json updated with overrides at {stats_path}")
+
+
 def main():
     """Main execution function."""
     parser = argparse.ArgumentParser(description="HDF5 to LeRobot Dataset Converter")
@@ -147,6 +205,12 @@ def main():
             "Thread count for parallel JPEG/PNG decode per episode (0 = auto: min(8, CPU count))."
             " Does not parallelize LeRobot dataset writes; use 1 if memory is tight."
         ),
+    )
+    parser.add_argument(
+        "--stats-override",
+        action="store_true",
+        default=False,
+        help="Apply stats_override from config JSON after conversion (default: off)",
     )
     args = parser.parse_args()
 
@@ -177,6 +241,14 @@ def main():
             logging.info(f"Saved episode: {ep_dir.name}")
 
     dataset.finalize()
+
+    if args.stats_override:
+        if "stats_override" in config:
+            dataset_root = Path(args.tgt_path) / args.repo_id
+            apply_stats_override(dataset_root, config["stats_override"])
+        else:
+            logging.warning("--stats-override flag set but no 'stats_override' section found in config")
+
     logging.info("Dataset conversion completed!")
 
 

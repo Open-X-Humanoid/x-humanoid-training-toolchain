@@ -1,0 +1,30 @@
+# Deployment Configuration
+# ──────────────────────────────────────────────────────────────────
+
+# mode: 'model' for policy inference, 'replay' for HDF5 action replay
+mode: 'model'
+
+# hand_type: 'brainco' or 'inspire'
+hand_type: 'inspire'
+
+# Model inference settings (used when mode='model')
+model_path: '/path/to/checkpoints/pretrained_model'
+
+# HDF5 replay settings (used when mode='replay')
+h5_path: '/path/to/trajectory.hdf5'
+
+# Camera
+camera_name: 'camera'
+
+# Action publishing rate (Hz)
+action_rate: 20.0
+
+# ──────────────────────────────────────────────────────────────────
+# Optional overrides (uncomment to customize, otherwise uses
+# per-hand-type defaults)
+# ──────────────────────────────────────────────────────────────────
+# obs_camera_key: 'camera_head'   # key in obs dict for camera image
+# arm_spd: 0.5                    # arm motor speed
+# arm_cur: 5.0                    # arm motor current
+# home_position: [...]            # 14-dim home joint positions
+# home_wait: 3                    # seconds to wait before homing

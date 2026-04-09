@@ -12,7 +12,7 @@
         },
         "action": {
             "dtype": "float32",
-            "shape": [16],
+            "shape": [26],
             "names": null
         },
         "observation.images.camera": {
@@ -27,7 +27,7 @@
             "feature_key": "observation.state"
         },
         {
-            "hdf5_key": "master/joint_position",
+            "hdf5_key": "puppet/joint_position",
             "feature_key": "action"
         },
         {
