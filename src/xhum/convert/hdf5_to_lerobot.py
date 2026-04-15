@@ -218,6 +218,13 @@ def main():
     if decode_workers <= 0:
         decode_workers = min(8, (os.cpu_count() or 4))
 
+    # SVT-AV1 encoder log level: 0=silent, 1=error, 2=warn, 3=info(default)
+    # Override with SVT_LOG=3 if you need full encoder diagnostics.
+    os.environ.setdefault("SVT_LOG", "1")
+    # Suppress ffmpeg/libav "moov atom" info logs
+    os.environ.setdefault("AV_LOG_FORCE_NOCOLOR", "1")
+    logging.getLogger("libav").setLevel(logging.ERROR)
+
     config = load_config(args.config)
     dataset = initialize_dataset(repo_id=args.repo_id, tgt_path=args.tgt_path, config=config)
 
@@ -225,10 +232,10 @@ def main():
     src_root = Path(args.src_root)
     episodes = sorted([ep for ep in src_root.iterdir() if ep.is_dir()])
 
-    logging.info(
-        f"Start processing {len(episodes)} episodes (decode workers per episode: {decode_workers})..."
-    )
-    for ep_dir in episodes:
+    total = len(episodes)
+    logging.info(f"Start processing {total} episodes (decode workers per episode: {decode_workers})...")
+    saved = 0
+    for idx, ep_dir in enumerate(episodes, 1):
         ep_path = ep_dir / episode_rel
         if process_episode(
             ep_path,
@@ -238,7 +245,8 @@ def main():
             decode_workers=decode_workers,
         ):
             dataset.save_episode()
-            logging.info(f"Saved episode: {ep_dir.name}")
+            saved += 1
+            logging.info(f"[{saved}/{total}] Saved episode: {ep_dir.name}")
 
     dataset.finalize()
 

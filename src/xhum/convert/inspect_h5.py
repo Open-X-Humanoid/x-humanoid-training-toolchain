@@ -96,7 +96,8 @@ def print_datasets(h5file: h5py.File, datasets: list[dict], sample_rows: int = 2
         print(f"  {'Key':<50} {'Frames':<10} {'Dtype'}")
         print(f"  {'─' * 50} {'─' * 10} {'─' * 10}")
         for d in image_ds:
-            print(f"  {d['key']:<50} {d['shape'][0]:<10} {d['dtype']}")
+            frames = d['shape'][0] if len(d['shape']) > 0 else "scalar"
+            print(f"  {d['key']:<50} {str(frames):<10} {d['dtype']}")
         print()
 
     if other_ds:
