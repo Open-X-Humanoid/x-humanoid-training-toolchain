@@ -1,0 +1,31 @@
+{
+  "datasets": [
+    {
+      "repo_id": "dvt217/dvt217_stack_cube_2026_0317/dvt217_stack_cube",
+      "root": "/media/jushen/neil-liu/dataNmodels/lerobot_dataset/dvt217/dvt217_stack_cube_2026_0317/dvt217_stack_cube",
+      "episodes": null
+    },
+    {
+      "repo_id": "dvt228/dvt228_grasp_water",
+      "root": "/media/jushen/neil-liu/dataNmodels/lerobot_dataset/dvt228/dvt228_grasp_water",
+      "episodes": null
+    }
+  ],
+  "policy": {
+    "type": "act",
+    "path": null,
+    "push_to_hub": false
+  },
+  "training": {
+    "output_dir": "/path/to/output",
+    "job_name": "multi_act_run_001",
+    "batch_size": 32,
+    "steps": 200000,
+    "num_workers": 4,
+    "save_freq": 20000,
+    "log_freq": 200,
+    "seed": 1000
+  },
+  "use_imagenet_stats": true,
+  "video_backend": "pyav"
+}
