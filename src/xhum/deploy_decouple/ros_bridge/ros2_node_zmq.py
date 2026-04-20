@@ -1,21 +1,30 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Unified ROS2 deployment node for TienKung robot.
+"""ROS2 deploy node (Python 3.10) with remote policy over ZMQ.
 
-Supports BrainCo and Inspire dexterous hands via `hand_type` config,
-and model inference / HDF5 replay via `mode` config.
+Same robot I/O as ``src/xhum/deploy/ros2_deploy.py``; ``mode=model`` uses
+``PolicyClient`` to talk to ``algorithm/policy_server.py`` (Python 3.12 +
+LeRobot) instead of loading torch inside this process.
 
-Usage:
-    xhum-deploy --config my_config.yaml
+Run (after sourcing ROS):
+  python3 ros2_node_zmq.py --config /path/to/config_zmq.yaml
 """
+
+from __future__ import annotations
 
 import argparse
 import os
+import sys
 import threading
 import time
+from pathlib import Path
 from typing import Tuple
 
-import h5py
+# Allow running as a loose script (not installed as a package)
+_THIS_DIR = Path(__file__).resolve().parent
+if str(_THIS_DIR) not in sys.path:
+    sys.path.insert(0, str(_THIS_DIR))
+
 import numpy as np
 import rclpy
 import yaml
@@ -45,11 +54,8 @@ try:
 except ImportError:
     BRAINCO_AVAILABLE = False
 
-from xhum.deploy.policy_agent import PolicyAgent
-
-# ──────────────────────────────────────────────────────────────────────
-# Per-hand-type defaults
-# ──────────────────────────────────────────────────────────────────────
+from hdf5_actions import load_action_trajectory
+from policy_client import PolicyClient
 
 _BRAINCO_HOME = [
     -0.05916397, 0.11694484, 0.00816471, -1.6296118, -0.18107964, -0.1322771, -0.08812793,
@@ -84,20 +90,16 @@ HAND_TYPE_DEFAULTS = {
 DEFAULT_CONFIG = {
     "mode": "model",
     "hand_type": "inspire",
-    "model_path": "PATH_TO_MODEL",
+    "policy_server_url": "tcp://127.0.0.1:5555",
     "h5_path": "PATH_TO_H5",
     "camera_name": "camera",
     "action_rate": 20.0,
 }
 
-# ──────────────────────────────────────────────────────────────────────
-# Helpers
-# ──────────────────────────────────────────────────────────────────────
-
 
 def load_config(config_path: str | None, logger) -> dict:
     if config_path is None:
-        config_path = os.path.join(os.path.dirname(__file__), "config.yaml")
+        config_path = str(_THIS_DIR / "config_zmq.example.yaml")
     try:
         with open(config_path, "r", encoding="utf-8") as f:
             config = yaml.safe_load(f) or {}
@@ -117,28 +119,8 @@ def load_config(config_path: str | None, logger) -> dict:
 
 
 def load_hdf5_actions(h5_path: str, logger) -> list[np.ndarray]:
-    """Load action sequence from HDF5.
-
-    Supports ``puppet/joint_position`` (T, 26) or legacy aligned *_align groups.
-    """
     try:
-        with h5py.File(h5_path, "r") as f:
-            if "puppet/joint_position" in f:
-                arr = np.asarray(f["puppet/joint_position"])
-                if arr.ndim == 2 and arr.shape[1] == 26:
-                    actions = [np.asarray(row, dtype=np.float64) for row in arr]
-                    logger.info(f"Loaded {len(actions)} steps from puppet/joint_position in {h5_path}")
-                    return actions
-
-            left_arm = np.asarray(f["puppet/arm_left_position_align/data"])
-            right_arm = np.asarray(f["puppet/arm_right_position_align/data"])
-            left_hand = np.asarray(f["puppet/end_effector_left_position_align/data"])
-            right_hand = np.asarray(f["puppet/end_effector_right_position_align/data"])
-            t = min(left_arm.shape[0], right_arm.shape[0], left_hand.shape[0], right_hand.shape[0])
-            actions = [
-                np.concatenate([left_arm[i], left_hand[i], right_arm[i], right_hand[i]]).astype(np.float64)
-                for i in range(t)
-            ]
+        actions = load_action_trajectory(h5_path)
         logger.info(f"Loaded {len(actions)} actions from {h5_path}")
         return actions
     except Exception as e:
@@ -146,23 +128,18 @@ def load_hdf5_actions(h5_path: str, logger) -> list[np.ndarray]:
         return []
 
 
-# ──────────────────────────────────────────────────────────────────────
-# Node
-# ──────────────────────────────────────────────────────────────────────
-
-
 class PolicyAgentNode(Node):
     def __init__(self, config_path: str | None = None):
-        super().__init__("policy_agent_node")
+        super().__init__("policy_agent_node_zmq")
 
         self.config = load_config(config_path, self.get_logger())
         self.mode = self.config["mode"]
         self.hand_type = self.config["hand_type"]
 
-        # ── mode ──
         if self.mode == "model":
-            self.action_policy = PolicyAgent(self.config["model_path"])
-            self.get_logger().info(f"Mode=MODEL  model={self.config['model_path']}")
+            url = self.config["policy_server_url"]
+            self.action_policy = PolicyClient(server_url=url)
+            self.get_logger().info(f"Mode=MODEL  policy_server={url}")
         elif self.mode == "replay":
             self.h5_path = self.config["h5_path"]
             self.action_policy = None
@@ -170,7 +147,6 @@ class PolicyAgentNode(Node):
         else:
             raise ValueError(f"Unknown mode '{self.mode}', must be 'model' or 'replay'")
 
-        # ── hand-specific pub / sub ──
         self.left_hand_pos = np.zeros(6)
         self.right_hand_pos = np.zeros(6)
 
@@ -181,12 +157,10 @@ class PolicyAgentNode(Node):
         else:
             raise ValueError(f"Unknown hand_type '{self.hand_type}', must be 'brainco' or 'inspire'")
 
-        # ── arm ──
         self.joint_state_sub = self.create_subscription(MotorStatusMsg, "/arm/status", self._arm_callback, 10)
         self.left_jpos = None
         self.right_jpos = None
 
-        # ── camera ──
         self.bridge = CvBridge()
         self.image = None
         self.depth = None
@@ -197,14 +171,9 @@ class PolicyAgentNode(Node):
         self.ats = ApproximateTimeSynchronizer([self.rgb_sub, self.depth_sub], queue_size=10, slop=0.1)
         self.ats.registerCallback(self._image_callback)
 
-        # ── arm control publisher ──
         self.dual_arm_controller = self.create_publisher(CmdSetMotorPosition, "/arm/cmd_pos", 10)
 
-        self.get_logger().info(f"PolicyAgentNode init complete  hand_type={self.hand_type}")
-
-    # ================================================================
-    # Hand setup (BrainCo / Inspire)
-    # ================================================================
+        self.get_logger().info(f"PolicyAgentNode (ZMQ) init complete  hand_type={self.hand_type}")
 
     def _setup_brainco_hands(self):
         if not BRAINCO_AVAILABLE:
@@ -222,10 +191,6 @@ class PolicyAgentNode(Node):
 
         self.create_subscription(JointState, "/inspire_hand/state/left_hand", self._inspire_left_cb, 10)
         self.create_subscription(JointState, "/inspire_hand/state/right_hand", self._inspire_right_cb, 10)
-
-    # ================================================================
-    # Callbacks
-    # ================================================================
 
     def _brainco_left_cb(self, msg):
         self.left_hand_pos = np.array(msg.positions)
@@ -253,10 +218,6 @@ class PolicyAgentNode(Node):
         except Exception as e:
             self.get_logger().error(f"Image conversion error: {e}")
 
-    # ================================================================
-    # State queries
-    # ================================================================
-
     def get_current_arm_status(self):
         if self.left_jpos is None or self.right_jpos is None:
             self.get_logger().warning("Arm status not ready")
@@ -271,22 +232,13 @@ class PolicyAgentNode(Node):
         return np.asarray(pos).flatten()
 
     def get_current_proprioception(self):
-        """Build proprioception vector. Layout depends on hand_type:
-        - brainco: [arm(14), left_hand(6), right_hand(6)]
-        - inspire: [arm_left(7), left_hand(6), arm_right(7), right_hand(6)]
-        """
         arm = self.get_current_arm_status()
         lh = self.get_current_hand_position("left")
         rh = self.get_current_hand_position("right")
 
         if self.hand_type == "brainco":
             return np.concatenate([arm, lh, rh])
-        else:
-            return np.concatenate([arm[:7], lh, arm[7:], rh])
-
-    # ================================================================
-    # Control helpers
-    # ================================================================
+        return np.concatenate([arm[:7], lh, arm[7:], rh])
 
     def _construct_dual_arm_ctrl_msg(self, target_joint: list[float]):
         msg = CmdSetMotorPosition()
@@ -319,7 +271,6 @@ class PolicyAgentNode(Node):
         return True
 
     def control_hand(self, side: str, position):
-        """Send hand control command. Dispatches to hand-type-specific logic."""
         if self.hand_type == "brainco":
             self._control_hand_brainco(side, position)
         else:
@@ -359,10 +310,6 @@ class PolicyAgentNode(Node):
             self.right_hand_pos = np.array(position)
 
     def publish_action(self, action):
-        """Publish action to arm + hands. Layout depends on hand_type:
-        - brainco: [arm(14), left_hand(6), right_hand(6)]
-        - inspire: [arm_left(7), left_hand(6), arm_right(7), right_hand(6)]
-        """
         if self.hand_type == "brainco":
             target_joint = action[:14]
             left_hand = action[14:20]
@@ -388,10 +335,6 @@ class PolicyAgentNode(Node):
             "images": {cam_key: rgb},
             "arm_gripper_joints": proprioception,
         }
-
-    # ================================================================
-    # Reset & run
-    # ================================================================
 
     def reset_home(self):
         home_pos = self.config["home_position"]
@@ -434,24 +377,20 @@ class PolicyAgentNode(Node):
             self.get_logger().info("Finished streaming HDF5 actions.")
 
         elif self.mode == "model":
-            self.get_logger().info("Starting model inference loop")
+            self.get_logger().info("Starting remote model inference loop")
             while rclpy.ok():
                 obs = self.get_obs()
                 if obs is None:
                     time.sleep(0.1)
                     continue
                 action = self.action_policy.inference(obs)
-                self.publish_action(action[0].numpy())
+                row = action[0]
+                self.publish_action(np.asarray(row, dtype=np.float64))
                 time.sleep(action_period)
 
 
-# ──────────────────────────────────────────────────────────────────────
-# Entry point
-# ──────────────────────────────────────────────────────────────────────
-
-
 def main(args=None):
-    parser = argparse.ArgumentParser(description="Unified ROS2 deployment node")
+    parser = argparse.ArgumentParser(description="ROS2 deploy node (ZMQ remote policy)")
     parser.add_argument("--config", type=str, default=None, help="Path to config YAML")
     args_parsed, ros_args = parser.parse_known_args(args)
 

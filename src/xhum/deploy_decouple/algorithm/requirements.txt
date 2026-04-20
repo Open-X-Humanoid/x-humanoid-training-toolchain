@@ -1,0 +1,7 @@
+# Python 3.12+ environment for policy_server.py
+# Install LeRobot from your toolchain submodule, e.g.:
+#   pip install -e ../../../../lerobot
+numpy>=2.0.0
+opencv-python-headless>=4.9.0
+pyzmq>=26.0.0
+torch

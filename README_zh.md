@@ -82,23 +82,30 @@ cd x-humanoid-training-toolchain
 git submodule update --init --recursive
 ```
 
-### 2. 一键安装
+### 2. 一键安装（默认只装 LeRobot）
 
 ```bash
 make install
 ```
 
-内部执行两步：
+当前默认**只**执行：
 
 ```bash
 pip install -e ./lerobot    # 从子模块安装 LeRobot
-pip install -e .            # 安装 xhum 工具链
+```
+
+`src/xhum` 下的工具链**暂不**随默认安装；仅用 `lerobot-train` 等原生流程时不必装 `xhum`。
+
+需要 `xhum-convert` 等入口时，再执行完整安装：
+
+```bash
+make install-all    # LeRobot + pip install -e .（安装 xhum 包）
 ```
 
 ### 3. （可选）安装开发工具
 
 ```bash
-make install-dev
+make install-dev    # 等价于 install-all 后再装 dev 依赖
 ```
 
 ## 更新 LeRobot
@@ -135,7 +142,15 @@ pip install -e ./lerobot
 
 ### 数据集转换
 
-将 HDF5 格式的 RoboMIND 数据转换为 LeRobot V3 数据集格式：
+将 HDF5 格式的 RoboMIND 数据转换为 LeRobot V3 数据集格式。
+
+已执行 `make install-all` 时可直接用 `xhum-convert`；若未安装 `xhum` 包，可在仓库根目录用：
+
+```bash
+PYTHONPATH=src python -m xhum.convert.hdf5_to_lerobot --help
+```
+
+示例（安装入口后）：
 
 ```bash
 xhum-convert \

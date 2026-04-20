@@ -1,0 +1,54 @@
+# =============================================================================
+# ROS2 侧配置（Python 3.10）— 与 algorithm/policy_server.py（Python 3.12）配对
+# 复制本文件为 my_robot.yaml 后按需修改；运行：
+#   python3 ros2_node_zmq.py --config ./my_robot.yaml
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# 运行模式
+# -----------------------------------------------------------------------------
+# model : 走 ZMQ 调远端策略（需先在本机或其它机器启动 policy_server）
+# replay: 只回放 HDF5 里的 puppet 轨迹，不连 policy_server
+mode: model
+
+# inspire | brainco — 与硬件一致；会影响手部话题、obs 里相机短名、home 位等
+hand_type: inspire
+
+# -----------------------------------------------------------------------------
+# 本机部署（ROS 与 policy_server 同一台电脑）— 推荐写法
+# -----------------------------------------------------------------------------
+# 1) 先在一个终端（conda lerobot / Py3.12）启动策略服务，例如：
+#      python policy_server.py --model_path .../pretrained_model --bind tcp://127.0.0.1:5555
+# 2) 再在 ROS 终端启动本节点；下面地址必须与 policy_server 的 --bind 完全一致
+policy_server_url: tcp://127.0.0.1:5555
+
+# 若策略进程在别的主机上，改为 tcp://<那台机子的局域网IP>:5555（并注意防火墙 / SSH 隧道）
+
+# -----------------------------------------------------------------------------
+# 仅 mode: replay 时使用 — 指向单个 trajectory.hdf5 文件
+# -----------------------------------------------------------------------------
+# 支持 puppet/joint_position (T,26) 或旧版 *_align/data 四组数据集
+# 示例（请改成你的实际路径）：
+# h5_path: /media/jushen/neil-liu/dataNmodels/h5_data/dvt217_stack_cube_2026_0317/success_episodes/0317_133435/data/trajectory.hdf5
+h5_path: /path/to/trajectory.hdf5
+
+# -----------------------------------------------------------------------------
+# 相机与节拍（与 ros2_deploy 一致）
+# -----------------------------------------------------------------------------
+# 订阅 /<camera_name>/color/image_raw 与 depth；按实车 remap 修改
+camera_name: camera
+
+# 下发一次动作后 sleep 的倒数频率（Hz）；replay 与 model 均使用
+action_rate: 20.0
+
+# -----------------------------------------------------------------------------
+# 可选覆盖（默认随 hand_type 已设好，一般不必写）
+# -----------------------------------------------------------------------------
+# obs_camera_key 必须与模型 config 里视觉输入的「短名」一致
+#   例：observation.images.camera → camera；observation.images.camera_head → camera_head
+# inspire 默认 camera_head；brainco 默认 camera。若与 checkpoint 不一致请显式设置，例如：
+# obs_camera_key: camera
+# arm_spd: 0.5
+# arm_cur: 5.0
+# home_wait: 3
+# home_position: [ ... 14 个关节 ... ]

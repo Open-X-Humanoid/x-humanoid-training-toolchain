@@ -1,0 +1,5 @@
+# ROS Python 3.10 environment — install beside your ROS deps (rclpy, cv_bridge, etc.)
+numpy>=1.23.0
+pyzmq>=26.0.0
+PyYAML>=6.0
+h5py>=3.10.0

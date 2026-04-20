@@ -52,18 +52,24 @@ If you already cloned without `--recurse-submodules`:
 git submodule update --init --recursive
 ```
 
-`make install` runs two steps:
+`make install` installs **LeRobot only** (from the submodule). The `src/xhum` code does not need to be installed for native `lerobot-train` workflows.
+
+To also install the editable `xhum` package (enables `xhum-convert`, entry points, etc.):
 
 ```bash
-pip install -e ./lerobot    # LeRobot from submodule
-pip install -e .            # xhum toolchain
+make install-all   # lerobot + pip install -e .
 ```
 
 ### Verify installation
 
 ```bash
+lerobot-train --help
+```
+
+After `make install-all`:
+
+```bash
 xhum-convert --help
-xhum-train --help
 ```
 
 ### Update LeRobot submodule
@@ -75,7 +81,11 @@ make install-lerobot
 
 ## Data Conversion
 
-Convert HDF5 episode data into LeRobot V3 dataset format using `xhum-convert`.
+Convert HDF5 episode data into LeRobot V3 dataset format using `xhum-convert` (after `make install-all`), or run the module without installing `xhum`:
+
+```bash
+PYTHONPATH=src python -m xhum.convert.hdf5_to_lerobot --help
+```
 
 ### Source data layout
 
