@@ -1,8 +1,8 @@
 """Multi-dataset training script for LeRobot policies.
 
-Usage::
+Usage (from repo root)::
 
-    xhum-train-multi --config path/to/multi_train.json
+    ./scripts/xhum-run xhum.train.train_multi --config path/to/multi_train.json
 
 This script bypasses upstream ``lerobot-train`` (which blocks multi-dataset use)
 and directly orchestrates:

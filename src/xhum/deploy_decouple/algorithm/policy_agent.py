@@ -3,7 +3,7 @@
 """ACT policy inference (LeRobot v0.5.1) — runs under Python 3.12+ only.
 
 Lives under ``src/xhum/deploy_decouple/algorithm`` so ROS (Python 3.10) never
-imports LeRobot here. Keep in sync with ``src/xhum/deployment/policy_agent.py``
+imports LeRobot here. Keep in sync with ``src/xhum/deploy/policy_agent.py``
 when the model I/O contract changes.
 """
 

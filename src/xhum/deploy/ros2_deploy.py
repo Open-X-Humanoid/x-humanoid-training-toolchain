@@ -5,8 +5,12 @@
 Supports BrainCo and Inspire dexterous hands via `hand_type` config,
 and model inference / HDF5 replay via `mode` config.
 
-Usage:
-    xhum-deploy --config my_config.yaml
+``mode=replay`` does not subscribe to camera topics (open-loop replay);
+``mode=model`` uses RGB/depth sync for observations.
+
+Usage (from repo root)::
+
+    ./scripts/xhum-run xhum.deploy.ros2_deploy --config my_config.yaml
 """
 
 import argparse
@@ -46,6 +50,15 @@ except ImportError:
     BRAINCO_AVAILABLE = False
 
 from xhum.deploy.policy_agent import PolicyAgent
+
+# Arm command ROS topics (not configurable; remap at launch if needed)
+_ARM_STATUS_TOPIC = "/arm/status"
+_ARM_CMD_POS_TOPIC = "/arm/cmd_pos"
+_ARM_FLEX_FREQ_TOPIC = "/joint_states_flex_freq"
+
+_ARM_CMD_MODES = frozenset({"cmd_pos", "flex_freq"})
+_HAND_TYPES = frozenset({"brainco", "inspire"})
+_RUN_MODES = frozenset({"model", "replay"})
 
 # ──────────────────────────────────────────────────────────────────────
 # Per-hand-type defaults
@@ -88,11 +101,51 @@ DEFAULT_CONFIG = {
     "h5_path": "PATH_TO_H5",
     "camera_name": "camera",
     "action_rate": 20.0,
+    "arm_command": {"mode": "cmd_pos"},
 }
 
 # ──────────────────────────────────────────────────────────────────────
 # Helpers
 # ──────────────────────────────────────────────────────────────────────
+
+
+def _normalize_arm_command(config: dict) -> dict:
+    """Resolve arm publisher mode; topics are ``_ARM_CMD_POS_TOPIC`` / ``_ARM_FLEX_FREQ_TOPIC``."""
+    if "arm_flex_freq_topic" in config:
+        raise ValueError(
+            "Remove arm_flex_freq_topic from your YAML; arm topics are fixed in code "
+            f"(flex_freq publishes JointState on {_ARM_FLEX_FREQ_TOPIC})."
+        )
+    default_mode = "cmd_pos"
+    has_block = "arm_command" in config and config["arm_command"] is not None
+    has_legacy_mode = "arm_cmd_mode" in config
+    if has_block and has_legacy_mode:
+        raise ValueError("Use only `arm_command.mode`, not `arm_cmd_mode`, in the same file.")
+    if has_block:
+        blk = config["arm_command"]
+        if not isinstance(blk, dict):
+            raise ValueError("arm_command must be a mapping")
+        extra = set(blk.keys()) - {"mode"}
+        if extra:
+            raise ValueError(
+                f"arm_command only supports key 'mode' (topics are fixed in code); remove: {sorted(extra)}"
+            )
+        if "mode" not in blk:
+            raise ValueError(
+                "arm_command must include the key 'mode' (expected 'cmd_pos' or 'flex_freq')."
+            )
+        mode = blk["mode"]
+    elif "arm_cmd_mode" in config:
+        mode = config["arm_cmd_mode"]
+    else:
+        mode = default_mode
+
+    if not isinstance(mode, str) or not mode.strip():
+        raise ValueError(f"arm_command.mode must be a non-empty string, got {mode!r}")
+    mode = mode.strip()
+    if mode not in _ARM_CMD_MODES:
+        raise ValueError(f"arm_command.mode must be one of {sorted(_ARM_CMD_MODES)}, got {mode!r}")
+    return {"mode": mode}
 
 
 def load_config(config_path: str | None, logger) -> dict:
@@ -113,6 +166,9 @@ def load_config(config_path: str | None, logger) -> dict:
     hand_defaults = HAND_TYPE_DEFAULTS.get(merged["hand_type"], {})
     for k, v in hand_defaults.items():
         merged.setdefault(k, v)
+
+    merged["arm_command"] = _normalize_arm_command(config)
+    merged.pop("arm_cmd_mode", None)
     return merged
 
 
@@ -156,6 +212,15 @@ class PolicyAgentNode(Node):
         super().__init__("policy_agent_node")
 
         self.config = load_config(config_path, self.get_logger())
+        if "mode" not in self.config:
+            raise ValueError("config must contain key 'mode'")
+        if "hand_type" not in self.config:
+            raise ValueError("config must contain key 'hand_type'")
+        if "arm_command" not in self.config or not isinstance(self.config["arm_command"], dict):
+            raise ValueError("config must contain key 'arm_command' (mapping)")
+        if "mode" not in self.config["arm_command"]:
+            raise ValueError("arm_command must contain key 'mode'")
+
         self.mode = self.config["mode"]
         self.hand_type = self.config["hand_type"]
 
@@ -168,7 +233,7 @@ class PolicyAgentNode(Node):
             self.action_policy = None
             self.get_logger().info(f"Mode=REPLAY  h5={self.h5_path}")
         else:
-            raise ValueError(f"Unknown mode '{self.mode}', must be 'model' or 'replay'")
+            raise ValueError(f"config.mode must be one of {sorted(_RUN_MODES)}, got {self.mode!r}")
 
         # ── hand-specific pub / sub ──
         self.left_hand_pos = np.zeros(6)
@@ -179,26 +244,58 @@ class PolicyAgentNode(Node):
         elif self.hand_type == "inspire":
             self._setup_inspire_hands()
         else:
-            raise ValueError(f"Unknown hand_type '{self.hand_type}', must be 'brainco' or 'inspire'")
+            raise ValueError(
+                f"config.hand_type must be one of {sorted(_HAND_TYPES)}, got {self.hand_type!r}"
+            )
 
         # ── arm ──
-        self.joint_state_sub = self.create_subscription(MotorStatusMsg, "/arm/status", self._arm_callback, 10)
+        self.joint_state_sub = self.create_subscription(MotorStatusMsg, _ARM_STATUS_TOPIC, self._arm_callback, 10)
         self.left_jpos = None
         self.right_jpos = None
 
-        # ── camera ──
-        self.bridge = CvBridge()
+        # ── camera (model only; replay is open-loop, no camera topics) ──
+        self._use_camera = self.mode == "model"
+        self.bridge = None
         self.image = None
         self.depth = None
-
-        camera_name = self.config["camera_name"]
-        self.rgb_sub = Subscriber(self, Image, f"/{camera_name}/color/image_raw")
-        self.depth_sub = Subscriber(self, Image, f"/{camera_name}/depth/image_raw")
-        self.ats = ApproximateTimeSynchronizer([self.rgb_sub, self.depth_sub], queue_size=10, slop=0.1)
-        self.ats.registerCallback(self._image_callback)
+        self.rgb_sub = None
+        self.depth_sub = None
+        self.ats = None
+        if self._use_camera:
+            self.bridge = CvBridge()
+            camera_name = self.config["camera_name"]
+            self.rgb_sub = Subscriber(self, Image, f"/{camera_name}/color/image_raw")
+            self.depth_sub = Subscriber(self, Image, f"/{camera_name}/depth/image_raw")
+            self.ats = ApproximateTimeSynchronizer([self.rgb_sub, self.depth_sub], queue_size=10, slop=0.1)
+            self.ats.registerCallback(self._image_callback)
+            self.get_logger().info(f"Camera sync: /{camera_name}/color|depth/image_raw (model mode)")
+        else:
+            self.get_logger().info("Mode=replay: no camera subscriptions (open-loop HDF5 replay)")
 
         # ── arm control publisher ──
-        self.dual_arm_controller = self.create_publisher(CmdSetMotorPosition, "/arm/cmd_pos", 10)
+        ac = self.config["arm_command"]
+        if "mode" not in ac:
+            raise ValueError("arm_command must contain key 'mode'")
+        self._arm_cmd_mode = ac["mode"]
+        if self._arm_cmd_mode not in _ARM_CMD_MODES:
+            raise ValueError(
+                f"arm_command.mode must be one of {sorted(_ARM_CMD_MODES)}, got {self._arm_cmd_mode!r}"
+            )
+        self.dual_arm_controller = None
+        self.arm_flex_freq_publisher = None
+        if self._arm_cmd_mode == "cmd_pos":
+            if not BODYCTRL_AVAILABLE:
+                raise RuntimeError(
+                    "arm_command.mode=cmd_pos requires bodyctrl_msgs "
+                    "(CmdSetMotorPosition / SetMotorPosition on /arm/cmd_pos)."
+                )
+            self.dual_arm_controller = self.create_publisher(CmdSetMotorPosition, _ARM_CMD_POS_TOPIC, 10)
+            self.get_logger().info(f"Arm command: CmdSetMotorPosition -> {_ARM_CMD_POS_TOPIC}")
+        elif self._arm_cmd_mode == "flex_freq":
+            self.arm_flex_freq_publisher = self.create_publisher(JointState, _ARM_FLEX_FREQ_TOPIC, 10)
+            self.get_logger().info(f"Arm command: JointState (flex_freq) -> {_ARM_FLEX_FREQ_TOPIC}")
+        else:
+            raise RuntimeError(f"invalid arm_command.mode (internal): {self._arm_cmd_mode!r}")
 
         self.get_logger().info(f"PolicyAgentNode init complete  hand_type={self.hand_type}")
 
@@ -247,6 +344,8 @@ class PolicyAgentNode(Node):
         self.right_jpos = tmp[7:]
 
     def _image_callback(self, rgb_msg, depth_msg):
+        if not self._use_camera or self.bridge is None:
+            return
         try:
             self.image = self.bridge.imgmsg_to_cv2(rgb_msg, desired_encoding="rgb8")
             self.depth = self.bridge.imgmsg_to_cv2(depth_msg, desired_encoding="passthrough")
@@ -267,7 +366,12 @@ class PolicyAgentNode(Node):
         return self.image, self.depth
 
     def get_current_hand_position(self, side: str = "left"):
-        pos = self.left_hand_pos if side == "left" else self.right_hand_pos
+        if side == "left":
+            pos = self.left_hand_pos
+        elif side == "right":
+            pos = self.right_hand_pos
+        else:
+            raise ValueError(f"side must be 'left' or 'right', got {side!r}")
         return np.asarray(pos).flatten()
 
     def get_current_proprioception(self):
@@ -281,29 +385,59 @@ class PolicyAgentNode(Node):
 
         if self.hand_type == "brainco":
             return np.concatenate([arm, lh, rh])
-        else:
+        if self.hand_type == "inspire":
             return np.concatenate([arm[:7], lh, arm[7:], rh])
+        raise ValueError(
+            f"hand_type must be one of {sorted(_HAND_TYPES)}, got {self.hand_type!r}"
+        )
 
     # ================================================================
     # Control helpers
     # ================================================================
 
-    def _construct_dual_arm_ctrl_msg(self, target_joint: list[float]):
+    def _construct_dual_arm_ctrl_msg(self, target_joint: list[float]) -> CmdSetMotorPosition:
+        """bodyctrl: CmdSetMotorPosition with 14× SetMotorPosition (motor id + pos/spd/cur)."""
         msg = CmdSetMotorPosition()
         msg.header = Header()
         msg.header.stamp = self.get_clock().now().to_msg()
 
-        arm_spd = self.config["arm_spd"]
-        arm_cur = self.config["arm_cur"]
+        arm_spd = float(self.config["arm_spd"])
+        arm_cur = float(self.config["arm_cur"])
 
         for idx, val in enumerate(target_joint):
             cmd = SetMotorPosition()
-            cmd.name = 11 + idx if idx < 7 else 14 + idx
-            cmd.pos = val.item()
+            cmd.name = int(11 + idx if idx < 7 else 14 + idx)
+            cmd.pos = float(np.asarray(val).reshape(()))
             cmd.spd = arm_spd
             cmd.cur = arm_cur
             msg.cmds.append(cmd)
         return msg
+
+    def _construct_arm_flex_freq_msg(self, target_joint: list[float]) -> JointState:
+        """sensor_msgs: JointState on flex-freq topic (names \"1\"..\"14\", rad, velocity zeros)."""
+        msg = JointState()
+        msg.header = Header()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.name = [str(i) for i in range(1, 15)]
+        msg.position = [float(x) for x in target_joint]
+        msg.velocity = [0.0] * 14
+        msg.effort = []
+        return msg
+
+    def _publish_arm_target(self, target_joint) -> None:
+        tj = np.asarray(target_joint, dtype=np.float64).flatten().tolist()
+        if len(tj) != 14:
+            raise ValueError(f"arm target must have 14 elements, got {len(tj)}")
+        if self._arm_cmd_mode == "cmd_pos":
+            out = self._construct_dual_arm_ctrl_msg(tj)
+            self.dual_arm_controller.publish(out)
+        elif self._arm_cmd_mode == "flex_freq":
+            out = self._construct_arm_flex_freq_msg(tj)
+            self.arm_flex_freq_publisher.publish(out)
+        else:
+            raise RuntimeError(
+                f"arm_command.mode must be one of {sorted(_ARM_CMD_MODES)}, got {self._arm_cmd_mode!r}"
+            )
 
     def reach_target_joint(self, target_joint) -> bool:
         fine_step = 500
@@ -312,7 +446,7 @@ class PolicyAgentNode(Node):
 
         self.get_logger().info("Moving arm to target position...")
         for stp in step_array:
-            self.dual_arm_controller.publish(self._construct_dual_arm_ctrl_msg(stp))
+            self._publish_arm_target(stp)
             time.sleep(1.0 / 400.0)
 
         self.get_logger().info("Arm reached target position")
@@ -320,10 +454,16 @@ class PolicyAgentNode(Node):
 
     def control_hand(self, side: str, position):
         """Send hand control command. Dispatches to hand-type-specific logic."""
+        if side not in ("left", "right"):
+            raise ValueError(f"control_hand side must be 'left' or 'right', got {side!r}")
         if self.hand_type == "brainco":
             self._control_hand_brainco(side, position)
-        else:
+        elif self.hand_type == "inspire":
             self._control_hand_inspire(side, position)
+        else:
+            raise ValueError(
+                f"hand_type must be one of {sorted(_HAND_TYPES)}, got {self.hand_type!r}"
+            )
 
     def _control_hand_brainco(self, side: str, position):
         msg = SetMotorMulti()
@@ -336,9 +476,11 @@ class PolicyAgentNode(Node):
         if side == "left":
             self.left_hand_publisher.publish(msg)
             self.left_hand_pos = np.asarray(msg.positions, dtype=np.float64)
-        else:
+        elif side == "right":
             self.right_hand_publisher.publish(msg)
             self.right_hand_pos = np.asarray(msg.positions, dtype=np.float64)
+        else:
+            raise ValueError(f"side must be 'left' or 'right', got {side!r}")
 
     def _control_hand_inspire(self, side: str, position):
         if isinstance(position, (list, np.ndarray)):
@@ -354,9 +496,11 @@ class PolicyAgentNode(Node):
         if side == "left":
             self.left_hand_publisher.publish(msg)
             self.left_hand_pos = np.array(position)
-        else:
+        elif side == "right":
             self.right_hand_publisher.publish(msg)
             self.right_hand_pos = np.array(position)
+        else:
+            raise ValueError(f"side must be 'left' or 'right', got {side!r}")
 
     def publish_action(self, action):
         """Publish action to arm + hands. Layout depends on hand_type:
@@ -367,16 +511,22 @@ class PolicyAgentNode(Node):
             target_joint = action[:14]
             left_hand = action[14:20]
             right_hand = action[20:]
-        else:
+        elif self.hand_type == "inspire":
             target_joint = np.concatenate([action[:7], action[13:20]])
             left_hand = action[7:13]
             right_hand = action[20:]
+        else:
+            raise ValueError(
+                f"hand_type must be one of {sorted(_HAND_TYPES)}, got {self.hand_type!r}"
+            )
 
-        self.dual_arm_controller.publish(self._construct_dual_arm_ctrl_msg(target_joint))
+        self._publish_arm_target(target_joint)
         self.control_hand("left", left_hand)
         self.control_hand("right", right_hand)
 
     def get_obs(self):
+        if not self._use_camera:
+            return None
         proprioception = self.get_current_proprioception()
         rgb, _depth = self.get_current_imgs()
         if rgb is None:
@@ -404,9 +554,13 @@ class PolicyAgentNode(Node):
         if self.hand_type == "brainco":
             self.control_hand("left", [99] * 6)
             self.control_hand("right", [99] * 6)
-        else:
+        elif self.hand_type == "inspire":
             self.control_hand("left", 1.0)
             self.control_hand("right", 1.0)
+        else:
+            raise ValueError(
+                f"hand_type must be one of {sorted(_HAND_TYPES)}, got {self.hand_type!r}"
+            )
 
         self.get_logger().info("Home position reached")
 
@@ -443,6 +597,8 @@ class PolicyAgentNode(Node):
                 action = self.action_policy.inference(obs)
                 self.publish_action(action[0].numpy())
                 time.sleep(action_period)
+        else:
+            raise RuntimeError(f"run() invalid mode (internal): {self.mode!r}")
 
 
 # ──────────────────────────────────────────────────────────────────────

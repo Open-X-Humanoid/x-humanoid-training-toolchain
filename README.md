@@ -21,10 +21,13 @@ x-humanoid-training-toolchain/
 │   │   └── configs/                   # Dataset conversion configs
 │   ├── train/
 │   │   └── configs/                   # Training configs (for lerobot-train)
-│   └── deployment/
-│       ├── policy_agent.py            # Policy inference wrapper
-│       ├── ros2_brainco.py            # ROS2 node for BrainCo hands
-│       └── ros2_inspire.py            # ROS2 node for Inspire hands
+│   ├── deploy/                        # Unified ROS2 deploy (./scripts/xhum-run xhum.deploy.ros2_deploy)
+│   │   ├── policy_agent.py
+│   │   ├── ros2_deploy.py
+│   │   └── config.yaml
+│   └── deploy_decouple/               # Py3.12 policy server + Py3.10 ROS ZMQ bridge (see README inside)
+├── scripts/
+│   └── xhum-run                       # Run xhum modules without pip install (sets PYTHONPATH=src)
 ├── pyproject.toml
 └── Makefile
 ```
@@ -43,7 +46,13 @@ x-humanoid-training-toolchain/
 ```bash
 git clone --recurse-submodules https://github.com/Open-X-Humanoid/x-humanoid-training-toolchain.git
 cd x-humanoid-training-toolchain
-make install
+make install          # LeRobot submodule only (same as make install-all)
+```
+
+Developer tools (formatting/tests) **without** installing `xhum`:
+
+```bash
+make install-dev      # LeRobot + pre-commit, pytest, ruff only
 ```
 
 If you already cloned without `--recurse-submodules`:
@@ -52,24 +61,13 @@ If you already cloned without `--recurse-submodules`:
 git submodule update --init --recursive
 ```
 
-`make install` installs **LeRobot only** (from the submodule). The `src/xhum` code does not need to be installed for native `lerobot-train` workflows.
-
-To also install the editable `xhum` package (enables `xhum-convert`, entry points, etc.):
-
-```bash
-make install-all   # lerobot + pip install -e .
-```
+`make install` / `make install-all` install **LeRobot only** (from the submodule). Run `xhum` from the repo root with **`./scripts/xhum-run`** (sets `PYTHONPATH=src`) or `PYTHONPATH=src python -m …`.
 
 ### Verify installation
 
 ```bash
 lerobot-train --help
-```
-
-After `make install-all`:
-
-```bash
-xhum-convert --help
+./scripts/xhum-run xhum.convert.hdf5_to_lerobot --help
 ```
 
 ### Update LeRobot submodule
@@ -81,10 +79,10 @@ make install-lerobot
 
 ## Data Conversion
 
-Convert HDF5 episode data into LeRobot V3 dataset format using `xhum-convert` (after `make install-all`), or run the module without installing `xhum`:
+Convert HDF5 episode data into LeRobot V3 dataset format **without** installing `xhum`:
 
 ```bash
-PYTHONPATH=src python -m xhum.convert.hdf5_to_lerobot --help
+./scripts/xhum-run xhum.convert.hdf5_to_lerobot --help
 ```
 
 ### Source data layout
@@ -167,7 +165,7 @@ A JSON config file defines the dataset metadata, output features, and HDF5-to-fe
 ### Run conversion
 
 ```bash
-xhum-convert \
+./scripts/xhum-run xhum.convert.hdf5_to_lerobot \
   --config src/xhum/convert/configs/dvt217_stack_cube.json \
   --repo_id dvt217_stack_cube \
   --src_root /path/to/hdf5/episodes \
@@ -223,9 +221,17 @@ The training config (`act_tienkung.json`) defines dataset, policy architecture, 
 | `policy.input_features` | Must match the features in your conversion config |
 | `policy.output_features` | Action feature shape |
 
-Checkpoints are saved in HuggingFace `from_pretrained`-compatible format, ready for deployment with `PolicyAgent`.
+Checkpoints are saved in HuggingFace `from_pretrained`-compatible format, ready for deployment with `xhum.deploy.policy_agent.PolicyAgent` (or the decoupled copy under `src/xhum/deploy_decouple/algorithm/`).
 
+## ROS2 deployment
 
+From the repo root, unified ROS2 node (`hand_type` in YAML selects BrainCo vs Inspire):
+
+```bash
+./scripts/xhum-run xhum.deploy.ros2_deploy --config /path/to/src/xhum/deploy/config.yaml
+```
+
+For Python 3.12 policy + Python 3.10 ROS over ZMQ, see **`src/xhum/deploy_decouple/README.md`**.
 
 ## Related Projects
 

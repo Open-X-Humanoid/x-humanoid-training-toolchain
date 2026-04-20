@@ -18,20 +18,20 @@ bash src/xhum/train/run_train_native.sh --resume=true
 
 ---
 
-## 2. 多数据集训练（xhum-train-multi）
+## 2. 多数据集训练（`train_multi`）
 
 独立于 `lerobot-train`，支持将多个 LeRobot 数据集合并训练。
 
 ### 前提条件
 
-- 已安装 xhum 工具链（`pip install -e .`）
-- 各数据集已通过 `xhum-convert` 转换为 LeRobot V3 格式
+- 在仓库根目录用 **`./scripts/xhum-run`**（或 `PYTHONPATH=src`）运行：`xhum.train.train_multi`
+- 各数据集已转换为 LeRobot V3 格式（`./scripts/xhum-run xhum.convert.hdf5_to_lerobot ...`）
 - **所有数据集的 action / state 维度必须一致**（不一致会报错）
 
 ### 使用方式
 
 ```bash
-xhum-train-multi --config path/to/multi_train.json
+./scripts/xhum-run xhum.train.train_multi --config path/to/multi_train.json
 ```
 
 ### 配置文件格式

@@ -43,11 +43,6 @@ dependencies = [
 ros2 = []
 dev = ["pre-commit>=3.7.0", "pytest>=8.1.0", "ruff>=0.4.0"]
 
-[project.scripts]
-xhum-convert = "xhum.convert.hdf5_to_lerobot:main"
-xhum-deploy = "xhum.deploy.ros2_deploy:main"
-xhum-train-multi = "xhum.train.train_multi:main"
-
 [project.urls]
 homepage = "https://github.com/Open-X-Humanoid/x-humanoid-training-toolchain"
 upstream-lerobot = "https://github.com/huggingface/lerobot"

@@ -51,11 +51,14 @@ x-humanoid-training-toolchain/
 │   │   ├── hdf5_to_lerobot.py      # HDF5 → LeRobot V3 数据集转换
 │   │   ├── convert.sh              # 转换示例脚本
 │   │   └── configs/                # 数据集 schema 与训练配置
-│   └── deployment/
-│       ├── policy_agent.py          # 策略推理封装
-│       ├── ros2_brainco.py          # BrainCo 灵巧手 ROS2 部署
-│       └── ros2_inspire.py          # Inspire 灵巧手 ROS2 部署
-├── pyproject.toml                   # xhum 包配置
+│   ├── deploy/                      # 统一 ROS2 实机部署（./scripts/xhum-run xhum.deploy.ros2_deploy）
+│   │   ├── policy_agent.py
+│   │   ├── ros2_deploy.py
+│   │   └── config.yaml
+│   └── deploy_decouple/             # Py3.12 策略服务 + Py3.10 ROS ZMQ（见该目录 README）
+├── scripts/
+│   └── xhum-run                     # 不设 PYTHONPATH 也可运行：./scripts/xhum-run xhum.<模块> …
+├── pyproject.toml                   # Python 包元数据（本仓库通过 scripts/xhum-run 使用 xhum）
 ├── Makefile                         # 快速安装命令
 └── static/                          # 演示素材
 ```
@@ -94,18 +97,21 @@ make install
 pip install -e ./lerobot    # 从子模块安装 LeRobot
 ```
 
-`src/xhum` 下的工具链**暂不**随默认安装；仅用 `lerobot-train` 等原生流程时不必装 `xhum`。
-
-需要 `xhum-convert` 等入口时，再执行完整安装：
+`src/xhum` 工具链**默认不** `pip install`；在仓库根目录用 **`./scripts/xhum-run`** 即可直接跑各模块（已自动设置 `PYTHONPATH=src`）。
 
 ```bash
-make install-all    # LeRobot + pip install -e .（安装 xhum 包）
+./scripts/xhum-run xhum.convert.hdf5_to_lerobot --help
+./scripts/xhum-run xhum.deploy.ros2_deploy --config src/xhum/deploy/config.yaml
 ```
+
+等价写法：`PYTHONPATH=src python -m xhum....`
+
+`make install` / `make install-all` **只装 LeRobot**；xhum 一律用 **`./scripts/xhum-run`**（或 `PYTHONPATH=src`）。
 
 ### 3. （可选）安装开发工具
 
 ```bash
-make install-dev    # 等价于 install-all 后再装 dev 依赖
+make install-dev    # 仅 LeRobot + pre-commit / pytest / ruff（不安装 xhum 包）
 ```
 
 ## 更新 LeRobot
@@ -144,16 +150,12 @@ pip install -e ./lerobot
 
 将 HDF5 格式的 RoboMIND 数据转换为 LeRobot V3 数据集格式。
 
-已执行 `make install-all` 时可直接用 `xhum-convert`；若未安装 `xhum` 包，可在仓库根目录用：
+推荐（在**仓库根目录**执行）：
 
 ```bash
-PYTHONPATH=src python -m xhum.convert.hdf5_to_lerobot --help
-```
+./scripts/xhum-run xhum.convert.hdf5_to_lerobot --help
 
-示例（安装入口后）：
-
-```bash
-xhum-convert \
+./scripts/xhum-run xhum.convert.hdf5_to_lerobot \
   --config src/xhum/convert/configs/Tien_Kung_Gello_1RGB.json \
   --repo_id my_dataset \
   --src_root /path/to/hdf5/data \
@@ -162,6 +164,7 @@ xhum-convert \
   --fps 30 \
   --robot_type tienkung
 ```
+
 
 | 参数 | 说明 |
 |---|---|
@@ -200,15 +203,14 @@ lerobot-dataset-viz --repo-id my_dataset --episode-index 0 --root /path/to/datas
 
 ### ROS2 部署
 
-修改部署脚本中的模型路径后运行：
+仓库根目录直接运行（`hand_type` 在 `config.yaml` 里选 `brainco` / `inspire`）：
 
 ```bash
-# BrainCo 灵巧手
-python -m xhum.deployment.ros2_brainco
-
-# Inspire 灵巧手
-python -m xhum.deployment.ros2_inspire
+./scripts/xhum-run xhum.deploy.ros2_deploy --config /path/to/src/xhum/deploy/config.yaml
+# 编辑 config.yaml：model_path、h5_path（replay）、hand_type、mode 等
 ```
+
+解耦部署（策略 Python3.12 + ROS Python3.10）见 **`src/xhum/deploy_decouple/README_zh.md`**。
 
 动作向量布局（26 维）：
 - `[0:7]` 左臂，`[7:13]` 左手，`[13:20]` 右臂，`[20:26]` 右手

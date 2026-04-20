@@ -8,7 +8,7 @@
 # 运行模式
 # -----------------------------------------------------------------------------
 # model : 走 ZMQ 调远端策略（需先在本机或其它机器启动 policy_server）
-# replay: 只回放 HDF5 里的 puppet 轨迹，不连 policy_server
+# replay: 纯开环回放 HDF5，不连 policy_server、不订阅相机（无需相机话题）
 mode: model
 
 # inspire | brainco — 与硬件一致；会影响手部话题、obs 里相机短名、home 位等
@@ -35,11 +35,21 @@ h5_path: /path/to/trajectory.hdf5
 # -----------------------------------------------------------------------------
 # 相机与节拍（与 ros2_deploy 一致）
 # -----------------------------------------------------------------------------
-# 订阅 /<camera_name>/color/image_raw 与 depth；按实车 remap 修改
+# 仅 mode: model 时订阅 /<camera_name>/color|depth/image_raw；replay 下不创建相机订阅，本项可忽略
 camera_name: camera
 
 # 下发一次动作后 sleep 的倒数频率（Hz）；replay 与 model 均使用
 action_rate: 20.0
+
+# -----------------------------------------------------------------------------
+# 手臂指令下发模式（二选一，只配 mode；话题名在 ros2_node_zmq.py 常量里写死）
+# -----------------------------------------------------------------------------
+# cmd_pos   : CmdSetMotorPosition -> /arm/cmd_pos
+# flex_freq : JointState（14 rad, vel 全 0）-> /joint_states_flex_freq
+arm_command:
+  mode: cmd_pos
+# arm_command:
+#   mode: flex_freq
 
 # -----------------------------------------------------------------------------
 # 可选覆盖（默认随 hand_type 已设好，一般不必写）

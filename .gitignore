@@ -28,8 +28,9 @@ outputs
 # Apple
 .DS_Store
 
-# VS Code
+# VS Code / editor local
 .vscode
+.cursor/
 
 # HPC
 nautilus/*.yaml

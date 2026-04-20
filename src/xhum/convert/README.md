@@ -7,7 +7,7 @@
 ```
 Step 1: inspect_h5.py  →  查看 HDF5 里有哪些 key / shape
 Step 2: 编辑 config JSON →  决定哪些 key 映射到 state、action、image
-Step 3: hdf5_to_lerobot.py (xhum-convert)  →  执行转换
+Step 3: hdf5_to_lerobot（仓库根目录 ``./scripts/xhum-run xhum.convert.hdf5_to_lerobot``）→  执行转换
 ```
 
 ---
@@ -158,8 +158,8 @@ Config 文件在 `src/xhum/convert/configs/` 目录下。文件结构：
 ## Step 3: 执行转换
 
 ```bash
-# 基本用法
-xhum-convert \
+# 基本用法（在仓库根目录）
+./scripts/xhum-run xhum.convert.hdf5_to_lerobot \
   --config src/xhum/convert/configs/dvt217_stack_cube.json \
   --repo_id dvt217_stack_cube \
   --src_root /path/to/success_episodes \
@@ -167,7 +167,7 @@ xhum-convert \
   --task_name stack_cube
 
 # 启用手动 stats 覆盖
-xhum-convert \
+./scripts/xhum-run xhum.convert.hdf5_to_lerobot \
   --config src/xhum/convert/configs/dvt217_stack_cube.json \
   --repo_id dvt217_stack_cube \
   --src_root /path/to/success_episodes \
@@ -176,7 +176,7 @@ xhum-convert \
   --stats-override
 
 # 控制图像解码线程数（默认自动）
-xhum-convert --config ... --decode-workers 4
+./scripts/xhum-run xhum.convert.hdf5_to_lerobot --config ... --decode-workers 4
 ```
 
 ### 参数说明
@@ -222,8 +222,8 @@ python src/xhum/convert/inspect_h5.py \
 # 2. 根据输出编辑 config
 #    vim src/xhum/convert/configs/dvt217_stack_cube.json
 
-# 3. 转换
-xhum-convert \
+# 3. 转换（仓库根目录）
+./scripts/xhum-run xhum.convert.hdf5_to_lerobot \
   --config src/xhum/convert/configs/dvt217_stack_cube.json \
   --repo_id dvt217_stack_cube \
   --src_root /media/jushen/neil-liu/dataNmodels/h5_data/sub_dvt217_stack_cube_2026_0317/success_episodes \
@@ -231,7 +231,7 @@ xhum-convert \
   --task_name stack_cube
 
 # 4. (可选) 如果 config 里配了 stats_override，加 --stats-override 启用
-xhum-convert \
+./scripts/xhum-run xhum.convert.hdf5_to_lerobot \
   --config ... \
   --stats-override
 ```

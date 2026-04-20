@@ -13,11 +13,15 @@ model_path: '/path/to/checkpoints/pretrained_model'
 # HDF5 replay settings (used when mode='replay')
 h5_path: '/path/to/trajectory.hdf5'
 
-# Camera
+# Camera (only used when mode='model'; replay does not subscribe to camera topics)
 camera_name: 'camera'
 
 # Action publishing rate (Hz)
 action_rate: 20.0
+
+# Arm command mode only (cmd_pos | flex_freq); topics are fixed in ros2_deploy.py
+# arm_command:
+#   mode: cmd_pos
 
 # ──────────────────────────────────────────────────────────────────
 # Optional overrides (uncomment to customize, otherwise uses
