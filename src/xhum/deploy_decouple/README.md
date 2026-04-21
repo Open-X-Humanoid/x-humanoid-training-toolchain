@@ -42,7 +42,8 @@ deploy_decouple/
 ├── launch/                   # Example shell wrappers (see launch/README.md)
 │   ├── start_policy.example.sh
 │   └── start_robot.example.sh
-└── scripts/                  # Local-only (gitignored): ad-hoc eval / smoke scripts
+└── scripts/
+    └── README.md             # How to run local *.py helpers (*.py not tracked)
 ```
 
 ---
@@ -51,7 +52,7 @@ deploy_decouple/
 
 - **Layout:** former `algorithm/`, `ros_bridge/`, etc. moved under `policy/`, `comms/`, `robot/`, `launch/`; use this README’s tree as the source of truth for entrypoints.
 - **PolicyAgent:** if `policy_preprocessor.json` and `policy_postprocessor.json` sit next to the checkpoint, inference matches LeRobot `predict_action` (normalize observations, **denormalize actions**). If those files are missing, behavior falls back to raw `select_action` (no denorm).
-- **HDF5 eval:** keep optional eval scripts under local `scripts/` (gitignored); typical flow builds observations from HDF5, runs the policy each step, compares to the next-row ground truth under `--gt_key`, and prints per-dimension **mean / max / min** of `pred - gt_next`.
+- **HDF5 eval / local scripts:** `*.py` under `scripts/` are not tracked; commands and examples live in **[`scripts/README.md`](./scripts/README.md)**.
 - **`src/xhum/deploy/policy_agent.py`** stays in sync with `deploy_decouple/policy/policy_agent.py` for the same preprocessor/postprocessor wiring.
 
 ---
@@ -126,8 +127,6 @@ Loads **RGB + state** from the same HDF5 each step, sends them to **`policy_serv
 
 From `src/xhum/deploy_decouple`:
 
-**Note:** `scripts/` is **gitignored**; keep the helper `.py` files locally under that directory (paths below are relative to `src/xhum/deploy_decouple`).
-
 **HDF5 → ZMQ → policy (same path as `mode=replay`, no ROS):**
 
 1. Terminal A — policy server (Py **≥3.12**, LeRobot, same as production):
@@ -140,23 +139,7 @@ From `src/xhum/deploy_decouple`:
 
    `cd robot && python3 run.py --config ./replay_debug.yaml`
 
-| Command | Purpose |
-|---------|---------|
-| `python scripts/test_replay_hdf5.py /path/to/trajectory.hdf5` | HDF5 **actions** load only (same as **`mode=replay_actions`**); no ZMQ. |
-| `python scripts/test_policy_agent_fake.py --model_path .../pretrained_model` | One in-process **`PolicyAgent`** inference with random obs (no ZMQ, Py **≥3.12**). |
-| `python scripts/eval_policy_from_hdf5.py --h5_path ... --model_path ...` | **`PolicyAgent.inference`** each step; prints **`pred`**, next-row **`gt_next`** from **`--gt_key`**, and **`diff(pred-gt_next)`**. Defaults: RGB **`observations/rgb_images/camera_camera`**, state **`puppet/joint_position`**, **`obs_camera_key=camera`**, GT **`master/joint_position`**. **`--quiet`**: no per-step vectors. Py **≥3.12** + LeRobot + **h5py**. |
-
-**HDF5 offline inference:** from `src/xhum/deploy_decouple`, set **`PYTHONPATH`** (include **`lerobot/src`**), e.g.:
-
-```bash
-export PYTHONPATH=/path/to/x-humanoid-training-toolchain/lerobot/src:$PYTHONPATH
-python scripts/eval_policy_from_hdf5.py \
-  --h5_path /path/to/trajectory.hdf5 \
-  --model_path /path/to/pretrained_model \
-  --max_steps 100
-```
-
-Optional **`--gt_key`**, **`--replay_images_h5_key`**, **`--replay_state_h5_key`**, **`--obs_camera_key`**, **`--start`**. **`--max_steps 0`** runs all frames. **`--quiet`** skips per-step prints.
+For offline eval, HDF5 smoke tests, and **`compare_joints`**, see **[`scripts/README.md`](./scripts/README.md)**.
 
 ---
 
@@ -197,15 +180,7 @@ Same as *Local checks*: start **`policy_server`**, then **`robot/run.py`** with 
 
 ### 3) Run the compare script (calibration)
 
-From **`src/xhum/deploy_decouple`** (needs **numpy**):
-
-```bash
-python3 scripts/compare_joints.py \
-  --client_dir /path/to/.../client_pre_send \
-  --server_dir /path/to/.../server_post_decode
-```
-
-Optional: **`--atol`**, **`--rtol`** (defaults ~`1e-5`), **`--verbose`**. Prints **`PASS`/`FAIL`**; **exit code 0** means every shared step matches under **`np.allclose`**, **non-zero** means missing files, shape mismatch, or value drift.
+Commands and flags: **[`scripts/README.md`](./scripts/README.md)** (`compare_joints.py`).
 
 ---
 

@@ -42,7 +42,8 @@ deploy_decouple/
 ├── launch/                   # 示例 shell 启动脚本（见 launch/README.md）
 │   ├── start_policy.example.sh
 │   └── start_robot.example.sh
-└── scripts/                  # 本地脚本目录（仓库 .gitignore，不进版本库；自管评测/冒烟等）
+└── scripts/
+    └── README.md             # 本地 .py 用法说明（同目录下 *.py 不纳入版本库）
 ```
 
 ---
@@ -51,7 +52,7 @@ deploy_decouple/
 
 - **目录重组**：原 `algorithm/`、`ros_bridge/` 等迁入 `policy/`、`comms/`、`robot/`、`launch/` 等；ZMQ 与 ROS 入口路径以本 README 目录树为准。
 - **PolicyAgent**：若 `pretrained_model/` 下存在 `policy_preprocessor.json` 与 `policy_postprocessor.json`，推理链路与 LeRobot `predict_action` 一致（观测按训练统计量归一化，动作反归一化后再返回）；缺少上述文件时保持旧行为（直接 `select_action`，无 denorm）。
-- **HDF5 评测**：可在本机 `scripts/` 下放评测脚本（该目录已 .gitignore）；典型用法为从 HDF5 构造观测、逐步推理，与 `--gt_key` 下一行 GT 对比，并按关节维度统计 `diff(pred - gt_next)`。
+- **HDF5 评测 / 本地脚本**：`scripts/` 下 `.py` 不纳入版本库；用法与命令见 **[`scripts/README.md`](./scripts/README.md)**。
 - **`src/xhum/deploy/policy_agent.py`**：与 `deploy_decouple/policy/policy_agent.py` 保持同步（同一套 pre/post processor 逻辑）。
 
 ---
@@ -126,8 +127,6 @@ python3 run.py --config ./my_robot.yaml
 
 在 **`src/xhum/deploy_decouple`** 下：
 
-**说明：** 仓库 **`.gitignore`** 已忽略 **`scripts/`**，下列命令中的脚本需在本机自行创建该目录并放入对应 `.py`（路径均相对 `src/xhum/deploy_decouple`）。
-
 **用 HDF5 验证 ZMQ**（与 `mode=replay` 同链路，不启 ROS）：
 
 1. **终端 A** — 策略服务（**Python ≥3.12**、LeRobot，与线上一致）：  
@@ -138,23 +137,7 @@ python3 run.py --config ./my_robot.yaml
 3. **终端 B** — 无头客户端（**Python 3.10** 即可；需 **pyzmq、h5py、numpy、pyyaml**）：  
    `cd robot && python3 run.py --config ./replay_debug.yaml`
 
-| 命令 | 作用 |
-|------|------|
-| `python scripts/test_replay_hdf5.py /path/to/trajectory.hdf5` | 只测 HDF5 **动作**加载（与 **`mode=replay_actions`** 一致）；**无 ZMQ**。 |
-| `python scripts/test_policy_agent_fake.py --model_path .../pretrained_model` | 进程内 **`PolicyAgent`** + 随机观测测一帧（**无 ZMQ**，需 **≥3.12**）。 |
-| `python scripts/eval_policy_from_hdf5.py --h5_path ... --model_path ...` | 逐帧 **`PolicyAgent.inference`**，打印 **`pred`**、**`gt_next`**（**`--gt_key`** 下一行）、**`diff(pred-gt_next)`**。默认输入：**`observations/rgb_images/camera_camera`** + **`puppet/joint_position`**，**`obs_camera_key=camera`**；默认 GT：**`master/joint_position`**。均可 CLI 覆盖。**`--quiet`** 关闭逐步打印。需 **≥3.12** + LeRobot + **h5py**。 |
-
-**HDF5 离线推理：** 在 **`src/xhum/deploy_decouple`** 下设置 **`PYTHONPATH`**（含 **`lerobot/src`**），例如：
-
-```bash
-export PYTHONPATH=/你的路径/x-humanoid-training-toolchain/lerobot/src:$PYTHONPATH
-python scripts/eval_policy_from_hdf5.py \
-  --h5_path /path/to/trajectory.hdf5 \
-  --model_path /path/to/pretrained_model \
-  --max_steps 100
-```
-
-可选 **`--gt_key`**、**`--replay_images_h5_key`**、**`--replay_state_h5_key`**、**`--obs_camera_key`**（须与 checkpoint 视觉短名一致）、**`--start`**。**`--max_steps 0`** 跑满。**`--quiet`** 不打印每步向量。
+离线评测、HDF5 冒烟、`compare_joints` 等脚本命令见 **[`scripts/README.md`](./scripts/README.md)**。
 
 ---
 
@@ -195,15 +178,7 @@ python policy_server.py \
 
 ### 3）执行对比脚本（校准）
 
-在 **`src/xhum/deploy_decouple`** 下（需 **numpy**）：
-
-```bash
-python3 scripts/compare_joints.py \
-  --client_dir /path/to/.../client_pre_send \
-  --server_dir /path/to/.../server_post_decode
-```
-
-可选：**`--atol`**、**`--rtol`**（默认约 `1e-5`）、**`--verbose`**。终端打印 **`PASS`/`FAIL`**；**退出码 0** 表示全部序号对齐且 **`np.allclose`** 通过，**非 0** 表示缺文件、shape 不一致或数值差异超阈值。
+命令与参数见 **[`scripts/README.md`](./scripts/README.md)**（`compare_joints.py`）。
 
 ---
 
