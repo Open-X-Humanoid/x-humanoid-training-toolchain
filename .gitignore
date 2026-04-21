@@ -22,6 +22,7 @@ src/xhum/deploy_decouple/**/debug_server_images/
 # Decoupled deploy: local helper / eval scripts (not versioned); keep scripts/README.md in git
 src/xhum/deploy_decouple/scripts/*
 !src/xhum/deploy_decouple/scripts/README.md
+!src/xhum/deploy_decouple/scripts/stat_hdf5_firstframe_mean.py
 
 # Logging
 logs

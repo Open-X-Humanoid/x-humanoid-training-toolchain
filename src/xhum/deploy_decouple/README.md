@@ -43,7 +43,8 @@ deploy_decouple/
 │   ├── start_policy.example.sh
 │   └── start_robot.example.sh
 └── scripts/
-    └── README.md             # How to run local *.py helpers (*.py not tracked)
+    ├── README.md                      # Script usage
+    └── stat_hdf5_firstframe_mean.py   # Mean of dataset[key][0] over many HDF5 (tracked); other *.py: see README
 ```
 
 ---

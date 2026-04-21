@@ -43,7 +43,8 @@ deploy_decouple/
 │   ├── start_policy.example.sh
 │   └── start_robot.example.sh
 └── scripts/
-    └── README.md             # 本地 .py 用法说明（同目录下 *.py 不纳入版本库）
+    ├── README.md                      # 脚本用法说明
+    └── stat_hdf5_firstframe_mean.py   # 多 HDF5 指定 key 首帧均值（已跟踪）；其余 *.py 见 README
 ```
 
 ---
