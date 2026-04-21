@@ -17,15 +17,12 @@ Working directory for commands below: **`src/xhum/deploy_decouple`**.
 ### 前置
 
 - 评测 / `PolicyAgent`：**Python ≥3.12**、`lerobot`、`torch`、**`h5py`** 等；`export PYTHONPATH=/你的路径/x-humanoid-training-toolchain/lerobot/src:$PYTHONPATH`
-- 仅 HDF5 动作加载测试：**Python 3.10** 亦可，需 **`h5py`**
 - **`compare_joints.py`**：需 **numpy**
 
 ### 命令一览
 
 | 命令 | 作用 |
 |------|------|
-| `python scripts/test_replay_hdf5.py /path/to/trajectory.hdf5` | 只测 HDF5 **动作**加载（与 **`mode=replay_actions`** 一致）；**无 ZMQ**。 |
-| `python scripts/test_policy_agent_fake.py --model_path .../pretrained_model` | 进程内 **`PolicyAgent`** + 随机观测测一帧（**无 ZMQ**，需 **≥3.12**）。 |
 | `python scripts/eval_policy_from_hdf5.py --h5_path ... --model_path ...` | 逐帧 **`PolicyAgent.inference`**，打印 **`pred`**、**`gt_next`**（**`--gt_key`** 下一行）、**`diff(pred-gt_next)`**；结束按维度输出 mean/max/min。默认输入：**`observations/rgb_images/camera_camera`** + **`puppet/joint_position`**，**`obs_camera_key=camera`**；默认 GT：**`master/joint_position`**。均可 CLI 覆盖。**`--quiet`** 关闭逐步打印。 |
 
 ### HDF5 离线推理示例
@@ -59,15 +56,12 @@ python3 scripts/compare_joints.py \
 ### Prerequisites
 
 - Eval / `PolicyAgent`: **Python ≥3.12**, `lerobot`, `torch`, **`h5py`**; `export PYTHONPATH=/path/to/x-humanoid-training-toolchain/lerobot/src:$PYTHONPATH`
-- HDF5 actions-only test: **Python 3.10** ok, needs **`h5py`**
 - **`compare_joints.py`**: needs **numpy**
 
 ### Command reference
 
 | Command | Purpose |
 |---------|---------|
-| `python scripts/test_replay_hdf5.py /path/to/trajectory.hdf5` | HDF5 **actions** load only (same as **`mode=replay_actions`**); no ZMQ. |
-| `python scripts/test_policy_agent_fake.py --model_path .../pretrained_model` | One in-process **`PolicyAgent`** step with random obs (no ZMQ, Py **≥3.12**). |
 | `python scripts/eval_policy_from_hdf5.py --h5_path ... --model_path ...` | **`PolicyAgent.inference`** each step; prints **`pred`**, next-row **`gt_next`** from **`--gt_key`**, **`diff(pred-gt_next)`**, then per-dimension mean/max/min. Defaults: RGB **`observations/rgb_images/camera_camera`**, state **`puppet/joint_position`**, **`obs_camera_key=camera`**, GT **`master/joint_position`**. **`--quiet`**: no per-step vectors. |
 
 ### HDF5 offline eval example
