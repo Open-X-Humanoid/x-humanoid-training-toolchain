@@ -42,9 +42,7 @@ deploy_decouple/
 ├── launch/                   # 示例 shell 启动脚本（见 launch/README.md）
 │   ├── start_policy.example.sh
 │   └── start_robot.example.sh
-└── scripts/
-    ├── README.md                      # 脚本用法说明
-    └── stat_hdf5_firstframe_mean.py   # 多 HDF5 指定 key 首帧均值（已跟踪）；其余 *.py 见 README
+└── scripts/                  # 说明与脚本见 scripts/（入口 scripts/README.md）
 ```
 
 ---
@@ -53,7 +51,7 @@ deploy_decouple/
 
 - **目录重组**：原 `algorithm/`、`ros_bridge/` 等迁入 `policy/`、`comms/`、`robot/`、`launch/` 等；ZMQ 与 ROS 入口路径以本 README 目录树为准。
 - **PolicyAgent**：若 `pretrained_model/` 下存在 `policy_preprocessor.json` 与 `policy_postprocessor.json`，推理链路与 LeRobot `predict_action` 一致（观测按训练统计量归一化，动作反归一化后再返回）；缺少上述文件时保持旧行为（直接 `select_action`，无 denorm）。
-- **HDF5 评测 / 本地脚本**：`scripts/` 下 `.py` 不纳入版本库；用法与命令见 **[`scripts/README.md`](./scripts/README.md)**。
+- **HDF5 评测 / 本地脚本**：见 **[`scripts/README.md`](./scripts/README.md)**（细节均在 `scripts/` 下说明）。
 - **`src/xhum/deploy/policy_agent.py`**：与 `deploy_decouple/policy/policy_agent.py` 保持同步（同一套 pre/post processor 逻辑）。
 
 ---

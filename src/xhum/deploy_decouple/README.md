@@ -42,9 +42,7 @@ deploy_decouple/
 ├── launch/                   # Example shell wrappers (see launch/README.md)
 │   ├── start_policy.example.sh
 │   └── start_robot.example.sh
-└── scripts/
-    ├── README.md                      # Script usage
-    └── stat_hdf5_firstframe_mean.py   # Mean of dataset[key][0] over many HDF5 (tracked); other *.py: see README
+└── scripts/                  # Docs + helpers; see scripts/ (start at scripts/README.md)
 ```
 
 ---
@@ -53,7 +51,7 @@ deploy_decouple/
 
 - **Layout:** former `algorithm/`, `ros_bridge/`, etc. moved under `policy/`, `comms/`, `robot/`, `launch/`; use this README’s tree as the source of truth for entrypoints.
 - **PolicyAgent:** if `policy_preprocessor.json` and `policy_postprocessor.json` sit next to the checkpoint, inference matches LeRobot `predict_action` (normalize observations, **denormalize actions**). If those files are missing, behavior falls back to raw `select_action` (no denorm).
-- **HDF5 eval / local scripts:** `*.py` under `scripts/` are not tracked; commands and examples live in **[`scripts/README.md`](./scripts/README.md)**.
+- **HDF5 eval / local scripts:** see **[`scripts/README.md`](./scripts/README.md)** (details live under `scripts/` only).
 - **`src/xhum/deploy/policy_agent.py`** stays in sync with `deploy_decouple/policy/policy_agent.py` for the same preprocessor/postprocessor wiring.
 
 ---
