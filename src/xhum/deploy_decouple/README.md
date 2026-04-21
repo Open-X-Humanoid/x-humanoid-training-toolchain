@@ -6,12 +6,15 @@ LeRobot / ACT inference needs **Python 3.12** (torch, `lerobot`). ROS2 on Ubuntu
 
 | Directory | Python | Role |
 |-----------|--------|------|
-| `algorithm/` | **3.12+** | `PolicyAgent` + **`policy_server.py`** — ZeroMQ **REP** (server) |
-| `ros_bridge/` | **3.10** (ROS) | Robot I/O; in **`mode=model`**, **`PolicyClient`** — ZeroMQ **REQ** (client) |
+| `policy/` | **3.12+** | `PolicyAgent` only (LeRobot / ACT); imported by the policy server |
+| `comms/` | **3.12+** (server) / **3.10** (client) | **`policy_server.py`**, **`policy_client.py`**, **`zmq_obs_codec.py`**, **`utils.py`** — ZMQ wire + processes |
+| `robot/` | **3.10** (ROS) | Robot + HDF5 I/O; loads **`PolicyClient`** from `comms/` when **`mode=model`** or **`mode=replay`** |
 
 **Why client on ROS:** the control loop runs in the ROS process and *pulls* one action per step from the policy process, so the ROS side is the natural **request** initiator. The policy process **binds** and **replies** with inference results.
 
-The wire protocol is described in `algorithm/policy_server.py`.
+The wire protocol is described in `comms/policy_server.py`.
+
+**Model path:** only when starting **`comms/policy_server.py`** via **`--model_path`**. **Do not put `model_path` in `robot/*.yaml`** — the ZMQ wire carries observations and actions only; the ROS client neither sends nor needs the checkpoint directory. To switch checkpoints, **restart the policy server** with a new **`--model_path`**.
 
 ---
 
@@ -21,32 +24,46 @@ The wire protocol is described in `algorithm/policy_server.py`.
 deploy_decouple/
 ├── README.md                 # This file (English)
 ├── README_zh.md              # Chinese
-├── algorithm/
+├── policy/
 │   ├── policy_agent.py       # ACT wrapper (keep in sync with src/xhum/deploy/policy_agent.py)
-│   ├── policy_server.py      # ZMQ server process
 │   └── requirements.txt
-├── ros_bridge/
-│   ├── policy_client.py      # ZMQ client (numpy + pyzmq); imported only in mode=model
-│   ├── hdf5_actions.py       # HDF5 loaders for replay (joint_position or legacy *_align)
-│   ├── ros2_node_zmq.py      # ROS2 node (model or replay)
-│   ├── config_zmq.example.yaml   # Annotated example (copy → my_robot.yaml)
+├── comms/
+│   ├── policy_server.py      # ZMQ REP server (Py3.12 + LeRobot; imports PolicyAgent)
+│   ├── policy_client.py      # ZMQ REQ client (numpy + pyzmq); model / replay / replay_debug
+│   ├── zmq_obs_codec.py      # Shared obs multipart encode/decode
+│   └── utils.py              # PNG / YAML int helpers (client + server)
+├── robot/
+│   ├── replay_io/            # HDF5 loaders (actions + RGB/state for ZMQ replay)
+│   ├── settings/             # YAML merge + PolicyClient factory (no ROS)
+│   ├── config/               # Example YAML (copy to robot/ root or pass path)
+│   ├── ros2_node_zmq.py      # Node implementation (also runnable)
+│   ├── run.py                # Thin entry — model / replay / replay_actions (ROS2) or replay_debug (no ROS)
 │   └── requirements.txt
-└── scripts/
-    ├── run_local_checks.py   # protocol | e2e
-    ├── test_replay_hdf5.py   # Offline replay HDF5 load
-    └── test_policy_agent_fake.py  # Load PolicyAgent + fake obs (no ROS)
+├── launch/                   # Example shell wrappers (see launch/README.md)
+│   ├── start_policy.example.sh
+│   └── start_robot.example.sh
+└── scripts/                  # Local-only (gitignored): ad-hoc eval / smoke scripts
 ```
 
 ---
 
-## Same machine: choose **`mode=model`** or **`mode=replay`**
+## Updates (branch `refactor/decouple-toolchain`)
+
+- **Layout:** former `algorithm/`, `ros_bridge/`, etc. moved under `policy/`, `comms/`, `robot/`, `launch/`; use this README’s tree as the source of truth for entrypoints.
+- **PolicyAgent:** if `policy_preprocessor.json` and `policy_postprocessor.json` sit next to the checkpoint, inference matches LeRobot `predict_action` (normalize observations, **denormalize actions**). If those files are missing, behavior falls back to raw `select_action` (no denorm).
+- **HDF5 eval:** keep optional eval scripts under local `scripts/` (gitignored); typical flow builds observations from HDF5, runs the policy each step, compares to the next-row ground truth under `--gt_key`, and prints per-dimension **mean / max / min** of `pred - gt_next`.
+- **`src/xhum/deploy/policy_agent.py`** stays in sync with `deploy_decouple/policy/policy_agent.py` for the same preprocessor/postprocessor wiring.
+
+---
+
+## Same machine: four YAML **`mode`** values (`model` / `replay` / `replay_actions` / `replay_debug`)
 
 ### A) **`mode=model`** (live policy) — two processes
 
 1. **Terminal A — policy server (Py 3.12, e.g. `conda activate lerobot-0.5.1`)**
 
 ```bash
-cd src/xhum/deploy_decouple/algorithm
+cd src/xhum/deploy_decouple/comms
 export PYTHONPATH=/path/to/x-humanoid-training-toolchain/lerobot/src:$PYTHONPATH
 pip install pyzmq   # once, in this env
 
@@ -63,72 +80,151 @@ Use **`127.0.0.1`** so only local processes connect (simpler than `0.0.0.0` on a
 source /opt/ros/humble/setup.bash
 # source your workspace if needed
 
-cd src/xhum/deploy_decouple/ros_bridge
+cd src/xhum/deploy_decouple/robot
 pip install pyzmq pyyaml h5py numpy   # pyzmq required for model mode (PolicyClient)
 
-cp config_zmq.example.yaml my_robot.yaml
+cp config/config_zmq.example.yaml my_robot.yaml
 # In YAML: mode: model
 # Set policy_server_url: tcp://127.0.0.1:5555 (must match --bind)
 # If your checkpoint uses observation.images.camera, set obs_camera_key: camera (see YAML comments)
 
-python3 ros2_node_zmq.py --config ./my_robot.yaml
+python3 run.py --config ./my_robot.yaml
 ```
 
-**Startup order (model only):** start **`policy_server` first**, then the ROS node.
+**Startup order (`mode=model` or `mode=replay`):** start **`policy_server` first**, then the ROS node. **`mode=replay_actions`** does not need the policy server.
 
-### B) **`mode=replay`** (HDF5 trajectory) — **no policy server**
+### B1) **`mode=replay_actions`** (HDF5 actions + ROS only) — **no policy server**
 
-Replay streams actions from `h5_path` only (**open-loop**). **Do not start `policy_server`**. The ROS node does **not** open a ZMQ connection; `policy_client` / **pyzmq** are **not** loaded. **No RGB/depth subscriptions** are created — you do not need camera drivers or `camera_name` topics for replay.
+Streams **actions** from `h5_path` only (**open-loop**). **Do not start `policy_server`**. No ZMQ; **pyzmq** is not required. **No RGB/depth ROS subscriptions** — you do not need live camera topics.
 
 ```bash
 source /opt/ros/humble/setup.bash
-cd src/xhum/deploy_decouple/ros_bridge
-pip install pyyaml h5py numpy   # pyzmq not needed for replay-only
+cd src/xhum/deploy_decouple/robot
+pip install pyyaml h5py numpy
 
-cp config_zmq.example.yaml my_robot.yaml
-# In YAML: mode: replay  and  h5_path: /path/to/trajectory.hdf5
-# policy_server_url is ignored in replay; camera_name is unused (no subscribers)
+cp config/config_zmq.example.yaml my_robot.yaml
+# In YAML: mode: replay_actions  and  h5_path: /path/to/trajectory.hdf5
 
-python3 ros2_node_zmq.py --config ./my_robot.yaml
+python3 run.py --config ./my_robot.yaml
 ```
+
+### B2) **`mode=replay`** (HDF5 observations + ZMQ + ROS)
+
+Loads **RGB + state** from the same HDF5 each step, sends them to **`policy_server`**, publishes the **returned action** (still **no ROS camera** — images come from the file). Start **`policy_server` first** (same as model). Install **pyzmq** in the ROS env. Use **`obs_camera_key`** so the image dataset key matches your file (or set **`replay_images_h5_key`** / **`replay_state_h5_key`** explicitly — see `config/config_zmq.example.yaml`).
 
 ---
 
 ## Configuration
 
-- Copy **`ros_bridge/config_zmq.example.yaml`** → `my_robot.yaml`.
-- Comments inside the YAML (Chinese) explain `mode`, `hand_type`, **same-machine ZMQ** (model only), `replay` **`h5_path`**, **`camera_name`** (model only; replay does not subscribe to cameras), `action_rate`, optional **`obs_camera_key`**, and **`arm_command.mode`** (`cmd_pos` or `flex_freq`; arm ROS topics are fixed in `ros2_node_zmq.py`).
+- Copy **`robot/config/config_zmq.example.yaml`** → `my_robot.yaml` (under `robot/`).
+- **Robot YAML has no `model_path`**; ZMQ-related fields are **`policy_server_url`**, etc. To change checkpoints, update **`policy_server.py --model_path`** and restart the server.
+- Comments inside the YAML (Chinese) explain `mode` (`model` / `replay` / `replay_actions` / `replay_debug`), `hand_type`, **`h5_path`**, optional **`replay_*_h5_key`**, **`camera_name`** (live camera: model only), `action_rate`, optional **`obs_camera_key`**, **`image_save`**, **`joints`** (joint vector dumps + ZMQ decode check), and **`arm_command.mode`** (`cmd_pos` or `flex_freq`; arm ROS topics are fixed in `ros2_node_zmq.py`). Legacy **`replay_via_zmq`** is deprecated (see YAML header).
 
 ---
 
-## Local tests (no robot / optional ROS)
+## Local checks (no robot)
 
 From `src/xhum/deploy_decouple`:
 
-| Command | Needs |
-|---------|--------|
-| `python scripts/run_local_checks.py protocol` | `numpy`, `pyzmq` — ZMQ roundtrip mock |
-| `python scripts/run_local_checks.py e2e --model_path .../pretrained_model` | Py **≥3.12**, LeRobot, torch, pyzmq; sets `PYTHONPATH` for the server subprocess; uses `LEROBOT_PYTHON` if set, else tries `python3.12` or `/opt/conda/envs/lerobot-0.5.1/bin/python` |
-| `python scripts/test_replay_hdf5.py /path/to/trajectory.hdf5` | `h5py`, `numpy` — same HDF5 logic as **`mode=replay`** |
-| `python scripts/test_policy_agent_fake.py --model_path .../pretrained_model` | Py **≥3.12**, LeRobot, torch, opencv — loads **`algorithm/policy_agent.py`** once with random obs |
+**Note:** `scripts/` is **gitignored**; keep the helper `.py` files locally under that directory (paths below are relative to `src/xhum/deploy_decouple`).
+
+**HDF5 → ZMQ → policy (same path as `mode=replay`, no ROS):**
+
+1. Terminal A — policy server (Py **≥3.12**, LeRobot, same as production):
+
+   `cd comms && python policy_server.py --model_path /path/to/pretrained_model --bind tcp://127.0.0.1:5555`
+
+2. Copy `robot/config/config_zmq.example.yaml` to e.g. `robot/replay_debug.yaml`. Set **`mode: replay_debug`**, **`h5_path`**, **`policy_server_url: tcp://127.0.0.1:5555`**, and align **`obs_camera_key`** / optional **`replay_*_h5_key`** with your HDF5.
+
+3. Terminal B — headless client (Py **3.10** ok; needs **pyzmq**, **h5py**, **numpy**, **pyyaml**):
+
+   `cd robot && python3 run.py --config ./replay_debug.yaml`
+
+| Command | Purpose |
+|---------|---------|
+| `python scripts/test_replay_hdf5.py /path/to/trajectory.hdf5` | HDF5 **actions** load only (same as **`mode=replay_actions`**); no ZMQ. |
+| `python scripts/test_policy_agent_fake.py --model_path .../pretrained_model` | One in-process **`PolicyAgent`** inference with random obs (no ZMQ, Py **≥3.12**). |
+| `python scripts/eval_policy_from_hdf5.py --h5_path ... --model_path ...` | **`PolicyAgent.inference`** each step; prints **`pred`**, next-row **`gt_next`** from **`--gt_key`**, and **`diff(pred-gt_next)`**. Defaults: RGB **`observations/rgb_images/camera_camera`**, state **`puppet/joint_position`**, **`obs_camera_key=camera`**, GT **`master/joint_position`**. **`--quiet`**: no per-step vectors. Py **≥3.12** + LeRobot + **h5py**. |
+
+**HDF5 offline inference:** from `src/xhum/deploy_decouple`, set **`PYTHONPATH`** (include **`lerobot/src`**), e.g.:
+
+```bash
+export PYTHONPATH=/path/to/x-humanoid-training-toolchain/lerobot/src:$PYTHONPATH
+python scripts/eval_policy_from_hdf5.py \
+  --h5_path /path/to/trajectory.hdf5 \
+  --model_path /path/to/pretrained_model \
+  --max_steps 100
+```
+
+Optional **`--gt_key`**, **`--replay_images_h5_key`**, **`--replay_state_h5_key`**, **`--obs_camera_key`**, **`--start`**. **`--max_steps 0`** runs all frames. **`--quiet`** skips per-step prints.
 
 ---
 
-## `mode: replay` (details)
+## Joint dumps & calibration (`joints`)
 
-Set `mode: replay` and `h5_path` to a **`trajectory.hdf5`** file. No **`policy_server`**, no **pyzmq**, and **no camera pipeline** on the ROS side (see **§B** above). Arm/hand I/O topics are still used for `reach_target_joint` / `reset_home` and proprioception if needed elsewhere.
+Checks that **`arm_gripper_joints`** match **after client-side multipart encode (pre-send)** vs **after server `multipart_to_obs` decode**. Files are paired by step index: `state_XXXXXXXX.npy`.
 
-Supported HDF5 layouts (see `hdf5_actions.py`):
+### 1) Enable dumps
 
-1. **`puppet/joint_position`** with shape `(T, 26)` — full command vector per step.
-2. Legacy groups: `puppet/arm_*_align/data` and `end_effector_*_align/data`.
+1. **Robot YAML** (e.g. `robot/config/test.yaml` or your `my_robot.yaml`):
+
+```yaml
+joints:
+  enabled: true
+  directory: debug_client_joint   # relative to the robot process cwd, or use an absolute path
+  use_timestamp_subdir: true      # false + absolute path pairs cleanly with server --joint_trace_flat
+```
+
+Writes: **`…/directory[/timestamp]/client_pre_send/state_*.npy`**.
+
+2. **Policy server** (alongside `--save_images_dir`, etc.):
+
+```bash
+cd src/xhum/deploy_decouple/comms
+python policy_server.py \
+  --model_path /path/to/pretrained_model \
+  --bind tcp://127.0.0.1:5555 \
+  --joint_trace_dir ./debug_server_joint
+```
+
+By default a **timestamp subdir** is created under `joint_trace_dir`, then **`server_post_decode/state_*.npy`**. Add **`--joint_trace_flat`** to skip that timestamp layer when you want a fixed parent directory.
+
+### 2) Run a short session
+
+Same as *Local checks*: start **`policy_server`**, then **`robot/run.py`** with **`mode=replay_debug`** (or **`model`** / **`replay`**) so real ZMQ inferences occur.
+
+**Directory alignment:** if both sides use timestamp subdirs (YAML `use_timestamp_subdir: true` and server without `--joint_trace_flat`), client and server timestamps will usually **differ**; point **`--client_dir`** and **`--server_dir`** at the **`client_pre_send`** and **`server_post_decode`** folders from **the same run**. For a single stable tree: YAML **`use_timestamp_subdir: false`** with an **absolute `directory`**, server **`--joint_trace_dir`** to the **same parent** plus **`--joint_trace_flat`**.
+
+### 3) Run the compare script (calibration)
+
+From **`src/xhum/deploy_decouple`** (needs **numpy**):
+
+```bash
+python3 scripts/compare_joints.py \
+  --client_dir /path/to/.../client_pre_send \
+  --server_dir /path/to/.../server_post_decode
+```
+
+Optional: **`--atol`**, **`--rtol`** (defaults ~`1e-5`), **`--verbose`**. Prints **`PASS`/`FAIL`**; **exit code 0** means every shared step matches under **`np.allclose`**, **non-zero** means missing files, shape mismatch, or value drift.
+
+---
+
+## `replay` / `replay_actions` / `replay_debug` (details)
+
+- **`mode=replay`:** set **`h5_path`**; requires **`policy_server`** and **pyzmq**. Observations from HDF5 each step (`replay_io/hdf5_replay_obs.py`), actions published on ROS after ZMQ inference.
+
+- **`mode=replay_actions`:** set **`h5_path`**; no ZMQ / no **`policy_server`**. Action layout: `replay_io/hdf5_actions.py` (`puppet/joint_position` `(T, 26)` or legacy `*_align` groups).
+
+- **`mode=replay_debug`:** no ROS; HDF5→ZMQ logging only (see *Local checks* above).
+
+- **Compatibility:** YAML with **`mode=replay` + `replay_via_zmq:false`** is normalized to **`replay_actions`** with a deprecation warning.
 
 ---
 
 ## Stay aligned with the monolithic stack
 
 - Robot I/O and YAML behaviour mirror **`src/xhum/deploy/ros2_deploy.py`** (including replay HDF5 loading in that file after the same update).
-- **`algorithm/policy_agent.py`** should stay in sync with **`src/xhum/deploy/policy_agent.py`** (obs dict: `images[<short_cam>]`, `arm_gripper_joints`).
+- **`policy/policy_agent.py`** should stay in sync with **`src/xhum/deploy/policy_agent.py`** (obs dict: `images[<short_cam>]`, `arm_gripper_joints`).
 
 ---
 
@@ -139,4 +235,4 @@ Supported HDF5 layouts (see `hdf5_actions.py`):
 
 ## Optional: systemd
 
-For **`mode=model`**, run `policy_server.py` under **systemd** or **supervisor** so it restarts on failure; start `ros2_node_zmq.py` after the server is listening. Replay-only deployments do not need this.
+For **`mode=model`** or **`mode=replay`**, run `comms/policy_server.py` under **systemd** or **supervisor** if you want auto-restart; start `run.py` after the server is listening. **`mode=replay_actions`** does not need this.

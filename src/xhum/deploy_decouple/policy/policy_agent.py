@@ -1,10 +1,10 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""Policy inference wrapper for TienKung robot deployment.
+"""ACT policy inference (LeRobot v0.5.1) — runs under Python 3.12+ only.
 
-Compatible with LeRobot v0.5.1 ACT policy API.  Observation key names,
-image sizes, and state / action dimensions are all read from the
-pretrained model's ``config.json`` — nothing is hardcoded.
+Lives under ``src/xhum/deploy_decouple/policy`` so ROS (Python 3.10) never
+imports LeRobot here. Keep in sync with ``src/xhum/deploy/policy_agent.py``
+when the model I/O contract changes.
 """
 
 from pathlib import Path
@@ -20,14 +20,7 @@ from lerobot.policies.factory import make_pre_post_processors
 
 
 class PolicyAgent:
-    """Thin wrapper around a pretrained ACTPolicy for real-robot inference.
-
-    Public API consumed by ``ros2_deploy.py`` and others::
-
-        agent = PolicyAgent("/path/to/pretrained_model")
-        action = agent.inference(obs)   # obs from ROS node
-        agent.reset()                   # call on episode boundary
-    """
+    """Thin wrapper around a pretrained ACTPolicy for real-robot inference."""
 
     def __init__(self, model_path: str | Path):
         self.model_path = Path(model_path)
@@ -45,8 +38,6 @@ class PolicyAgent:
         self.postprocessor: Any = None
         self._load_pre_post_processors()
 
-    # ── loading ────────────────────────────────────────────────────
-
     def _load_policy(self) -> ACTPolicy:
         print(f"[PolicyAgent] Loading model from: {self.model_path}")
         policy = ACTPolicy.from_pretrained(self.model_path)
@@ -55,12 +46,11 @@ class PolicyAgent:
         return policy
 
     def _parse_model_config(self):
-        """Extract image / state / action metadata from the loaded model config."""
         cfg = self.policy.config
 
         for key, feat in cfg.input_features.items():
             if feat.type is FeatureType.VISUAL:
-                _, h, w = feat.shape  # (C, H, W)
+                _, h, w = feat.shape
                 self._image_keys[key] = (w, h)
             elif feat.type is FeatureType.STATE:
                 self._state_key = key
@@ -75,7 +65,11 @@ class PolicyAgent:
         print(f"[PolicyAgent] State dim: {self._state_dim}  Action dim: {self._action_dim}")
 
     def _load_pre_post_processors(self) -> None:
-        """Align with LeRobot ``predict_action``: preprocessor on obs, postprocessor (denorm) on action."""
+        """Match LeRobot ``predict_action`` / async ``policy_server``: normalize obs, denorm action.
+
+        If ``policy_preprocessor.json`` / ``policy_postprocessor.json`` are absent (legacy export),
+        skip processors and call ``select_action`` on the raw batch (previous behavior).
+        """
         pre_json = self.model_path / "policy_preprocessor.json"
         post_json = self.model_path / "policy_postprocessor.json"
         if not (pre_json.is_file() and post_json.is_file()):
@@ -101,24 +95,7 @@ class PolicyAgent:
             flush=True,
         )
 
-    # ── public interface ───────────────────────────────────────────
-
     def inference(self, obs: dict) -> torch.Tensor:
-        """Run one inference step.
-
-        Args:
-            obs: Observation dict from the ROS node with schema::
-
-                    {
-                        "images": {"<cam_name>": np.ndarray (H, W, 3) uint8},
-                        "arm_gripper_joints": np.ndarray (state_dim,),
-                    }
-
-        Returns:
-            Action tensor of shape ``(batch, action_dim)``. When preprocessor/postprocessor
-            files are present (LeRobot export), the postprocessor follows the saved pipeline
-            (often same device as the policy).  Otherwise the tensor stays on the model device.
-        """
         batch = self._prepare_batch(obs)
         if self.preprocessor is not None:
             batch = self.preprocessor(batch)
@@ -128,28 +105,19 @@ class PolicyAgent:
         return action
 
     def reset(self):
-        """Reset the internal action queue.  Call on every episode start."""
         self.policy.reset()
         if self.preprocessor is not None:
             self.preprocessor.reset()
         if self.postprocessor is not None:
             self.postprocessor.reset()
 
-    # ── observation preparation ────────────────────────────────────
-
     def _prepare_batch(self, obs: dict) -> dict[str, torch.Tensor]:
-        """Convert a raw ROS observation dict into the batch format that
-        ``ACTPolicy.select_action`` expects.
-
-        Key mapping:
-          obs["images"]["camera"]       →  "observation.images.camera"
-          obs["arm_gripper_joints"]      →  "observation.state"
-        """
         batch: dict[str, torch.Tensor] = {}
         imgs = obs.get("images")
         if not isinstance(imgs, dict) or not imgs:
             raise ValueError("obs must have non-empty dict obs['images'] (short_name -> uint8 RGB HWC)")
 
+        # One visual input + one tensor: allow HDF5 key (e.g. camera_head) vs checkpoint (camera).
         remap_one: str | None = None
         if len(self._image_keys) == 1 and len(imgs) == 1:
             only_key = next(iter(imgs))
@@ -159,7 +127,6 @@ class PolicyAgent:
                 remap_one = only_key
 
         for model_key, (target_w, target_h) in self._image_keys.items():
-            # model_key is e.g. "observation.images.camera"
             cam_name = model_key.rsplit(".", maxsplit=1)[-1]
             if cam_name in imgs:
                 img = imgs[cam_name]
@@ -191,4 +158,3 @@ class PolicyAgent:
             batch[self._state_key] = state_t.unsqueeze(0).to(self.device, non_blocking=True)
 
         return batch
-

@@ -1,0 +1,108 @@
+# =============================================================================
+# ROS2 侧配置（Python 3.10）— 与 comms/policy_server.py（Python 3.12）配对
+# 复制到 robot/ 下为 my_robot.yaml 后按需修改；运行：
+#   python3 ros2_node_zmq.py --config ./my_robot.yaml
+# 或：python3 ros2_node_zmq.py --config ./config/config_zmq.example.yaml
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# 运行模式（四选一，语义固定）
+# -----------------------------------------------------------------------------
+# model          : 实时相机 + ZMQ 调 policy_server + ROS 下发动作（需先起 policy_server）
+# replay         : HDF5 每步读 RGB/状态 → ZMQ → policy_server → ROS 下发返回动作（不订阅 ROS 相机）
+# replay_actions : 开环：只把 HDF5 里录好的关节指令经 ROS 下发（无 ZMQ、无 policy_server）
+# replay_debug   : 无 ROS2：与 replay 相同 HDF5→ZMQ 链路，仅日志（导入 rclpy 前退出）
+#
+# 兼容旧配置：若仍写 mode=replay 且 replay_via_zmq=false，加载时会自动视为 replay_actions 并打弃用警告。
+mode: model
+
+# inspire | brainco — 与硬件一致；会影响手部话题、obs 里相机短名、home 位等
+hand_type: inspire
+
+# -----------------------------------------------------------------------------
+# 本机部署（ROS 与 policy_server 同一台电脑）— 推荐写法
+# -----------------------------------------------------------------------------
+# 1) 先在一个终端（conda lerobot / Py3.12）启动策略服务，例如：
+#      cd ../comms && python policy_server.py --model_path .../pretrained_model --bind tcp://127.0.0.1:5555
+# 2) 再在 ROS 终端启动本节点；下面地址必须与 policy_server 的 --bind 完全一致
+# 机端 YAML 无 model_path：模型仅在 policy_server 进程加载；换模型只改上面命令里的 --model_path 并重启服务。
+policy_server_url: tcp://127.0.0.1:5555
+
+# PolicyClient ZMQ 收发超时（毫秒）。首帧推理 + 大图可能 >10s；默认 120000。0 = 不超时（谨慎）
+# policy_zmq_timeout_ms: 120000
+
+# 若策略进程在别的主机上，改为 tcp://<那台机子的局域网IP>:5555（并注意防火墙 / SSH 隧道）
+
+# -----------------------------------------------------------------------------
+# mode 为 replay / replay_actions / replay_debug 时必填 — trajectory.hdf5
+# -----------------------------------------------------------------------------
+# 支持 puppet/joint_position (T,26) 或旧版 *_align/data 四组数据集
+# 示例（请改成你的实际路径）：
+# h5_path: /media/jushen/neil-liu/dataNmodels/h5_data/dvt217_stack_cube_2026_0317/success_episodes/0317_133435/data/trajectory.hdf5
+h5_path: /path/to/trajectory.hdf5
+
+# 已弃用：replay_via_zmq（请改用 mode=replay / replay_actions）。若 mode=replay 且此项为 false，加载时等价于 replay_actions。
+# replay_via_zmq: true
+# 若自动找不到图像或状态数据集，可显式指定 HDF5 内路径，例如：
+# 稠密 4D：observations/images/camera_head；JPEG 按帧 object：observations/rgb_images/camera_camera
+# replay_images_h5_key: observations/rgb_images/camera_camera
+# replay_state_h5_key: puppet/joint_position
+
+# -----------------------------------------------------------------------------
+# 相机与节拍（与 ros2_deploy 一致）
+# -----------------------------------------------------------------------------
+# 仅 mode: model 时订阅 /<camera_name>/color|depth/image_raw；replay / replay_actions / replay_debug 不创建相机订阅，本项可忽略
+camera_name: camera
+
+# 下发一次动作后 sleep 的倒数频率（Hz）；replay 与 model 均使用
+action_rate: 20.0
+
+# -----------------------------------------------------------------------------
+# 手臂指令下发模式（二选一，只配 mode；话题名在 ros2_node_zmq.py 常量里写死）
+# -----------------------------------------------------------------------------
+# cmd_pos   : CmdSetMotorPosition -> /arm/cmd_pos
+# flex_freq : JointState（14 rad, vel 全 0）-> /joint_states_flex_freq
+arm_command:
+  mode: cmd_pos
+# arm_command:
+#   mode: flex_freq
+
+# -----------------------------------------------------------------------------
+# 可选覆盖（默认随 hand_type 已设好，一般不必写）
+# -----------------------------------------------------------------------------
+# obs_camera_key 必须与模型 config 里视觉输入的「短名」一致
+#   例：observation.images.camera → camera；observation.images.camera_head → camera_head
+# inspire 默认 camera_head；brainco 默认 camera。若与 checkpoint 不一致请显式设置，例如：
+# obs_camera_key: camera
+# arm_spd: 0.5
+# arm_cur: 5.0
+# home_wait: 3
+# home_position: [ ... 14 个关节 ... ]
+
+# -----------------------------------------------------------------------------
+# 存图（obs 成功编码后、发 ZMQ 前写盘，与 multipart 中的 RGB 一致；ZMQ 超时不影响落盘）
+# -----------------------------------------------------------------------------
+# enabled: 是否把 obs["images"] 里每个相机写成 PNG（目录相对 cwd，除非写绝对路径）
+# interval: 每 N 次「成功推理」存一帧（1 = 每次都存）
+# max_frames: 最多存多少「成功推理步」（多相机时每步各一张）；0 = 不限制。勿写 yes/true（会变成 1）
+# use_timestamp_subdir: true 时在 directory 下再建一层时间戳子目录，避免覆盖
+# image_save:
+#   enabled: false
+#   directory: debug_policy_images
+#   interval: 1
+#   max_frames: 0
+#   use_timestamp_subdir: true
+
+# -----------------------------------------------------------------------------
+# 关节向量落盘（PolicyClient 编码 multipart 前 vs policy_server 解码后）
+# -----------------------------------------------------------------------------
+# 客户端：.../directory[/时间戳]/client_pre_send/state_XXXXXXXX.npy（与推理步号一致）
+# 服务端：启动 policy_server 时加 --joint_trace_dir <同一父路径或子路径>，写出
+#         .../server_post_decode/state_XXXXXXXX.npy
+# 单机对比：YAML 里 joints.use_timestamp_subdir: false，directory 写绝对路径；
+#   服务端：python policy_server.py ... --joint_trace_dir 同上绝对路径 --joint_trace_flat
+# 校验：python3 ../scripts/compare_joints.py --client_dir .../client_pre_send --server_dir .../server_post_decode
+# joints:
+#   enabled: false
+#   directory: debug_joints
+#   use_timestamp_subdir: true

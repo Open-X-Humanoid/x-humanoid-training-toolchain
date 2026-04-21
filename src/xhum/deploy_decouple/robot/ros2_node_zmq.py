@@ -2,21 +2,30 @@
 # -*- coding: utf-8 -*-
 """ROS2 deploy node (Python 3.10) with remote policy over ZMQ.
 
-Same robot I/O as ``src/xhum/deploy/ros2_deploy.py``; ``mode=model`` uses
-``PolicyClient`` to talk to ``algorithm/policy_server.py`` (Python 3.12 +
-LeRobot) instead of loading torch inside this process.
+Top-level ``mode`` (YAML):
 
-``mode=replay`` is **open-loop**: RGB/depth subscriptions are **not** created;
-only arm/hand I/O and HDF5 actions are used (no camera topics required).
+- **model** — Live camera + ``PolicyClient`` / ZMQ + ROS command publish (same I/O
+  ideas as ``src/xhum/deploy/ros2_deploy.py``; torch stays in the policy server).
 
-Run (after sourcing ROS):
-  python3 ros2_node_zmq.py --config /path/to/config_zmq.yaml
+- **replay** — HDF5 RGB/state each step → ZMQ ``policy_server`` → publish returned
+  actions on ROS (no live camera subscriptions).
+
+- **replay_actions** — Open-loop: stream recorded joint commands from HDF5 to ROS
+  only (no ZMQ, no policy server).
+
+- **replay_debug** — HDF5 → ZMQ like **replay**, but **no ROS2** (exits before ``rclpy``).
+
+Legacy: ``mode: replay`` + ``replay_via_zmq: false`` is accepted and mapped to
+``replay_actions`` with a deprecation warning.
+
+Run (after sourcing ROS) for model / replay / replay_actions on robot:
+  python3 run.py --config /path/to/config_zmq.yaml
+  # or: python3 ros2_node_zmq.py --config ...
 """
 
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 import threading
 import time
@@ -27,6 +36,122 @@ from typing import Tuple
 _THIS_DIR = Path(__file__).resolve().parent
 if str(_THIS_DIR) not in sys.path:
     sys.path.insert(0, str(_THIS_DIR))
+
+
+def run_replay_debug_main(config_path: str) -> int:
+    """Headless HDF5 → ZMQ (no rclpy). Only imported/called before ROS stack loads."""
+    import time as time_mod
+
+    import numpy as np
+
+    from settings.zmq_deploy_config import _make_policy_client, load_config
+    from replay_io.hdf5_replay_obs import load_replay_obs_trajectory
+
+    class _Log:
+        def info(self, msg: str) -> None:
+            print(msg)
+
+        def warning(self, msg: str) -> None:
+            print(f"[WARN] {msg}", file=sys.stderr)
+
+        def error(self, msg: str) -> None:
+            print(f"[ERROR] {msg}", file=sys.stderr)
+
+    log = _Log()
+    cfg = load_config(config_path, log)
+    if cfg.get("mode") != "replay_debug":
+        log.error(f"mode must be 'replay_debug' (got {cfg.get('mode')!r})")
+        return 1
+
+    h5 = cfg.get("h5_path")
+    if not h5 or str(h5) == "PATH_TO_H5":
+        log.error("replay_debug: set h5_path in YAML to trajectory.hdf5")
+        return 1
+
+    url = cfg.get("policy_server_url", "")
+    if not url:
+        log.error("replay_debug: set policy_server_url in YAML")
+        return 1
+
+    cam_key = cfg["obs_camera_key"]
+    img_key = cfg.get("replay_images_h5_key") or None
+    st_key = cfg.get("replay_state_h5_key") or None
+
+    try:
+        obs_list = load_replay_obs_trajectory(
+            str(h5),
+            obs_camera_key=cam_key,
+            images_h5_key=img_key if img_key else None,
+            state_h5_key=st_key if st_key else None,
+            logger=log,
+        )
+    except Exception as e:
+        log.error(f"load HDF5 observations failed: {e}")
+        return 1
+
+    if not obs_list:
+        log.error("empty observation list")
+        return 1
+
+    max_steps = int(cfg.get("replay_debug_max_steps", 0) or 0)
+    if max_steps <= 0:
+        max_steps = len(obs_list)
+    else:
+        max_steps = min(max_steps, len(obs_list))
+
+    action_rate = float(cfg.get("action_rate", 20.0))
+    period = 1.0 / max(action_rate, 1e-6)
+
+    zmq_to = int(cfg.get("policy_zmq_timeout_ms", 120_000))
+    log.info(
+        f"replay_debug: {max_steps} ZMQ inference steps  policy_server={url}  "
+        f"policy_zmq_timeout_ms={zmq_to} (0 = unlimited)  "
+        f"(no rclpy, no publishers; same PolicyClient path as mode=replay)"
+    )
+    if (cfg.get("image_save") or {}).get("enabled"):
+        log.info("image_save.enabled=true")
+
+    client = _make_policy_client(cfg, log)
+    try:
+        for i in range(max_steps):
+            t0 = time_mod.perf_counter()
+            action = client.inference(obs_list[i])
+            dt = time_mod.perf_counter() - t0
+            row = action[0]
+            log.info(
+                f"step {i + 1}/{max_steps}  wall={dt:.3f}s  action_shape={tuple(action.shape)}  "
+                f"|a|_mean={float(np.mean(np.abs(row))):.4f}"
+            )
+            time_mod.sleep(period)
+    finally:
+        client.close()
+
+    log.info("replay_debug: finished OK")
+    return 0
+
+
+def _maybe_run_replay_debug_early() -> None:
+    """If ``--config`` YAML has ``mode: replay_debug``, run headless path and exit (no ROS imports)."""
+    if __name__ != "__main__" or "--config" not in sys.argv:
+        return
+    import yaml
+
+    p = argparse.ArgumentParser(add_help=False)
+    p.add_argument("--config", type=str, default=None)
+    args, _ = p.parse_known_args()
+    if not args.config:
+        return
+    try:
+        with open(args.config, "r", encoding="utf-8") as f:
+            raw = yaml.safe_load(f) or {}
+    except OSError:
+        return
+    if raw.get("mode") != "replay_debug":
+        return
+    raise SystemExit(run_replay_debug_main(args.config))
+
+
+_maybe_run_replay_debug_early()
 
 import numpy as np
 import rclpy
@@ -57,7 +182,9 @@ try:
 except ImportError:
     BRAINCO_AVAILABLE = False
 
-from hdf5_actions import load_action_trajectory
+from settings.zmq_deploy_config import _make_policy_client, load_config
+from replay_io.hdf5_actions import load_action_trajectory
+from replay_io.hdf5_replay_obs import load_replay_obs_trajectory
 
 # Arm command ROS topics (not configurable; remap at launch if needed)
 _ARM_STATUS_TOPIC = "/arm/status"
@@ -66,7 +193,7 @@ _ARM_FLEX_FREQ_TOPIC = "/joint_states_flex_freq"
 
 _ARM_CMD_MODES = frozenset({"cmd_pos", "flex_freq"})
 _HAND_TYPES = frozenset({"brainco", "inspire"})
-_RUN_MODES = frozenset({"model", "replay"})
+_RUN_MODES = frozenset({"model", "replay", "replay_actions"})
 
 _BRAINCO_HOME = [
     -0.05916397, 0.11694484, 0.00816471, -1.6296118, -0.18107964, -0.1322771, -0.08812793,
@@ -80,101 +207,6 @@ _INSPIRE_HOME = [
     -0.13665378849680831, -0.8683540414019328, -0.287210096964022,
     -0.4483082608478825, 0.19435190805574742,
 ]
-
-HAND_TYPE_DEFAULTS = {
-    "brainco": {
-        "arm_spd": 150.0,
-        "arm_cur": 80.0,
-        "obs_camera_key": "camera",
-        "home_position": _BRAINCO_HOME,
-        "home_wait": 5,
-    },
-    "inspire": {
-        "arm_spd": 0.5,
-        "arm_cur": 5.0,
-        "obs_camera_key": "camera_head",
-        "home_position": _INSPIRE_HOME,
-        "home_wait": 3,
-    },
-}
-
-DEFAULT_CONFIG = {
-    "mode": "model",
-    "hand_type": "inspire",
-    "policy_server_url": "tcp://127.0.0.1:5555",
-    "h5_path": "PATH_TO_H5",
-    "camera_name": "camera",
-    "action_rate": 20.0,
-    # Only ``mode`` is read from YAML; arm ROS topics are fixed in this module.
-    "arm_command": {"mode": "cmd_pos"},
-}
-
-
-def _normalize_arm_command(config: dict) -> dict:
-    """Resolve arm publisher mode: ``arm_command.mode`` is ``cmd_pos`` or ``flex_freq``.
-
-    Topics are constants ``_ARM_CMD_POS_TOPIC`` / ``_ARM_FLEX_FREQ_TOPIC``. Legacy
-    ``arm_cmd_mode`` is accepted only when ``arm_command`` is absent from the file.
-    """
-    if "arm_flex_freq_topic" in config:
-        raise ValueError(
-            "Remove arm_flex_freq_topic from your YAML; arm topics are fixed in code "
-            f"(flex_freq publishes JointState on {_ARM_FLEX_FREQ_TOPIC})."
-        )
-    default_mode = "cmd_pos"
-    has_block = "arm_command" in config and config["arm_command"] is not None
-    has_legacy_mode = "arm_cmd_mode" in config
-    if has_block and has_legacy_mode:
-        raise ValueError("Use only `arm_command.mode`, not `arm_cmd_mode`, in the same file.")
-    if has_block:
-        blk = config["arm_command"]
-        if not isinstance(blk, dict):
-            raise ValueError("arm_command must be a mapping")
-        extra = set(blk.keys()) - {"mode"}
-        if extra:
-            raise ValueError(
-                f"arm_command only supports key 'mode' (topics are fixed in code); remove: {sorted(extra)}"
-            )
-        if "mode" not in blk:
-            raise ValueError(
-                "arm_command must include the key 'mode' (expected 'cmd_pos' or 'flex_freq')."
-            )
-        mode = blk["mode"]
-    elif "arm_cmd_mode" in config:
-        mode = config["arm_cmd_mode"]
-    else:
-        mode = default_mode
-
-    if not isinstance(mode, str) or not mode.strip():
-        raise ValueError(f"arm_command.mode must be a non-empty string, got {mode!r}")
-    mode = mode.strip()
-    if mode not in _ARM_CMD_MODES:
-        raise ValueError(f"arm_command.mode must be one of {sorted(_ARM_CMD_MODES)}, got {mode!r}")
-    return {"mode": mode}
-
-
-def load_config(config_path: str | None, logger) -> dict:
-    if config_path is None:
-        config_path = str(_THIS_DIR / "config_zmq.example.yaml")
-    try:
-        with open(config_path, "r", encoding="utf-8") as f:
-            config = yaml.safe_load(f) or {}
-        logger.info(f"Configuration loaded from: {config_path}")
-    except FileNotFoundError:
-        logger.warning(f"Config file not found: {config_path}, using defaults")
-        config = {}
-    except Exception as e:
-        logger.error(f"Error loading config: {e}, using defaults")
-        config = {}
-
-    merged = {**DEFAULT_CONFIG, **config}
-    hand_defaults = HAND_TYPE_DEFAULTS.get(merged["hand_type"], {})
-    for k, v in hand_defaults.items():
-        merged.setdefault(k, v)
-
-    merged["arm_command"] = _normalize_arm_command(config)
-    merged.pop("arm_cmd_mode", None)
-    return merged
 
 
 def load_hdf5_actions(h5_path: str, logger) -> list[np.ndarray]:
@@ -205,16 +237,31 @@ class PolicyAgentNode(Node):
         self.hand_type = self.config["hand_type"]
 
         if self.mode == "model":
-            # Lazy import: replay-only runs do not need pyzmq / policy_client.
-            from policy_client import PolicyClient
-
             url = self.config["policy_server_url"]
-            self.action_policy = PolicyClient(server_url=url)
+            self.action_policy = _make_policy_client(self.config, self.get_logger())
             self.get_logger().info(f"Mode=MODEL  policy_server={url}")
+            if (self.config.get("image_save") or {}).get("enabled"):
+                self.get_logger().info(
+                    "image_save.enabled=true: saving RGB after obs encode, before ZMQ send (see image_save.directory)."
+                )
         elif self.mode == "replay":
             self.h5_path = self.config["h5_path"]
+            url = self.config["policy_server_url"]
+            self.action_policy = _make_policy_client(self.config, self.get_logger())
+            self.get_logger().info(
+                f"Mode=REPLAY  h5={self.h5_path}  policy_server={url}  "
+                "(HDF5 RGB/state → ZMQ → actions on ROS)"
+            )
+            if (self.config.get("image_save") or {}).get("enabled"):
+                self.get_logger().info(
+                    "image_save.enabled=true: saving RGB after obs encode, before ZMQ send (see image_save.directory)."
+                )
+        elif self.mode == "replay_actions":
+            self.h5_path = self.config["h5_path"]
             self.action_policy = None
-            self.get_logger().info(f"Mode=REPLAY  h5={self.h5_path}")
+            self.get_logger().info(
+                f"Mode=REPLAY_ACTIONS  h5={self.h5_path} (HDF5 joint commands only, no ZMQ)"
+            )
         else:
             raise ValueError(
                 f"config.mode must be one of {sorted(_RUN_MODES)}, got {self.mode!r}"
@@ -252,7 +299,14 @@ class PolicyAgentNode(Node):
             self.ats.registerCallback(self._image_callback)
             self.get_logger().info(f"Camera sync: /{camera_name}/color|depth/image_raw (model mode)")
         else:
-            self.get_logger().info("Mode=replay: no camera subscriptions (open-loop HDF5 replay)")
+            if self.mode == "replay":
+                self.get_logger().info(
+                    "Mode=replay: no camera subscriptions (RGB/state read from HDF5, actions via ZMQ)"
+                )
+            elif self.mode == "replay_actions":
+                self.get_logger().info(
+                    "Mode=replay_actions: no camera subscriptions (open-loop HDF5 actions)"
+                )
 
         ac = self.config["arm_command"]
         if "mode" not in ac:
@@ -528,6 +582,31 @@ class PolicyAgentNode(Node):
         action_period = 1.0 / action_rate
 
         if self.mode == "replay":
+            if self.action_policy is None:
+                self.get_logger().error("replay mode requires PolicyClient (internal error)")
+                return
+            cam_key = self.config["obs_camera_key"]
+            img_key = self.config.get("replay_images_h5_key") or None
+            st_key = self.config.get("replay_state_h5_key") or None
+            obs_list = load_replay_obs_trajectory(
+                self.h5_path,
+                obs_camera_key=cam_key,
+                images_h5_key=img_key if img_key else None,
+                state_h5_key=st_key if st_key else None,
+                logger=self.get_logger(),
+            )
+            if not obs_list:
+                self.get_logger().error(f"No replay observations loaded from {self.h5_path}")
+                return
+            self.get_logger().info(f"Streaming {len(obs_list)} HDF5 observations through ZMQ...")
+            for obs in obs_list:
+                action = self.action_policy.inference(obs)
+                row = action[0]
+                self.publish_action(np.asarray(row, dtype=np.float64))
+                time.sleep(action_period)
+            self.get_logger().info("Finished replay (HDF5 + ZMQ).")
+
+        elif self.mode == "replay_actions":
             actions = load_hdf5_actions(self.h5_path, self.get_logger())
             if not actions:
                 self.get_logger().error(f"No actions loaded from {self.h5_path}")
@@ -537,7 +616,7 @@ class PolicyAgentNode(Node):
             for act in actions:
                 self.publish_action(act)
                 time.sleep(action_period)
-            self.get_logger().info("Finished streaming HDF5 actions.")
+            self.get_logger().info("Finished streaming HDF5 actions (replay_actions).")
 
         elif self.mode == "model":
             self.get_logger().info("Starting remote model inference loop")

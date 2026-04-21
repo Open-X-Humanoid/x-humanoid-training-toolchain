@@ -1,4 +1,4 @@
-# Python 3.12+ environment for policy_server.py
+# Python 3.12+ environment for ../comms/policy_server.py (imports PolicyAgent from this dir)
 # Install LeRobot from your toolchain submodule, e.g.:
 #   pip install -e ../../../../lerobot
 numpy>=2.0.0

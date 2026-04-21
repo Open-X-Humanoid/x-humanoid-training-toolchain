@@ -3,3 +3,5 @@ numpy>=1.23.0
 pyzmq>=26.0.0
 PyYAML>=6.0
 h5py>=3.10.0
+# image_save: OpenCV (often from ROS cv_bridge) or Pillow for PNG; else .npy fallback
+Pillow>=9.0.0

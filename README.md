@@ -221,7 +221,7 @@ The training config (`act_tienkung.json`) defines dataset, policy architecture, 
 | `policy.input_features` | Must match the features in your conversion config |
 | `policy.output_features` | Action feature shape |
 
-Checkpoints are saved in HuggingFace `from_pretrained`-compatible format, ready for deployment with `xhum.deploy.policy_agent.PolicyAgent` (or the decoupled copy under `src/xhum/deploy_decouple/algorithm/`).
+Checkpoints are saved in HuggingFace `from_pretrained`-compatible format, ready for deployment with `xhum.deploy.policy_agent.PolicyAgent` (or the decoupled copy under `src/xhum/deploy_decouple/policy/`).
 
 ## ROS2 deployment
 
