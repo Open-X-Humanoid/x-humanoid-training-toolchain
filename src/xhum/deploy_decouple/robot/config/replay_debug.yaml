@@ -1,12 +1,13 @@
 # =============================================================================
 # replay_debug：无 ROS 的 HDF5 → ZMQ 模型测试
-# 运行（在 robot/ 下，Py 3.10 即可，不需要 source ROS）：
-#   python3 run.py --config ./config/replay_debug.yaml
 #
-# 要先在 policy/ 下起 policy_server（Py 3.12，conda activate lerobot-0.5.1）：
-#   python policy_server.py \
-#     --model_path /media/jushen/neil-liu/dataNmodels/model_outputs/dvt217_run_002/checkpoints/200000/pretrained_model \
-#     --bind tcp://127.0.0.1:5555
+# 终端 A（Py 3.12 + LeRobot）：bash launch/start_policy_debug.sh
+# 终端 B（Py 3.10，本 YAML）：cd robot && python3 run.py --config ./config/replay_debug.yaml
+#
+# joints.directory / image_save.directory 使用 "../tmp/..." —— 相对 robot/ 的
+# cwd 解析后落到 deploy_decouple/tmp/，与 shell 里 $ROOT/tmp/ 同目录，client
+# 侧写 client_pre_send / client，server 侧写 server_post_decode / server，
+# 跑完直接 diff。
 # =============================================================================
 
 mode: replay_debug
@@ -34,7 +35,7 @@ action_rate: 20.0
 # 首次跑建议打开，校验 client 编 multipart vs server 解包后的关节向量是否一致
 joints:
   enabled: true
-  directory: /tmp/debug_joint_dvt217
+  directory: ../tmp/debug_joint_dvt217
   use_timestamp_subdir: false
 
 # 客户端在 multipart 编码后、ZMQ 发送前 存 PNG —— 就是"将要发出去的 RGB"
@@ -43,7 +44,7 @@ joints:
 # <directory>/client/ 和 <directory>/server/ 两条兄弟子目录（见下方 server 命令）
 image_save:
   enabled: true
-  directory: /tmp/debug_rgb_dvt217/client
+  directory: ../tmp/debug_rgb_dvt217/client
   interval: 20
   max_frames: 10
   use_timestamp_subdir: false
