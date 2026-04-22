@@ -33,6 +33,13 @@ _INSPIRE_HOME = [
     -0.4483082608478825, 0.19435190805574742,
 ]
 
+# Hand home defaults — mirror the values previously hard-coded in ros2_node.reset_home.
+# Format matches what ``PolicyAgentNode.control_hand`` already accepts:
+#   brainco: int list of 6 in [0..100] (99 ≈ fully open), or single int broadcast
+#   inspire: float in [0..1] (1.0 ≈ fully open), or list of 6 floats
+_BRAINCO_HAND_HOME = [99] * 6
+_INSPIRE_HAND_HOME = 1.0
+
 HAND_TYPE_DEFAULTS = {
     "brainco": {
         "arm_spd": 150.0,
@@ -40,6 +47,7 @@ HAND_TYPE_DEFAULTS = {
         "obs_camera_key": "camera",
         "home_position": _BRAINCO_HOME,
         "home_wait": 5,
+        "home_hand": {"left": list(_BRAINCO_HAND_HOME), "right": list(_BRAINCO_HAND_HOME)},
     },
     "inspire": {
         "arm_spd": 0.5,
@@ -47,6 +55,7 @@ HAND_TYPE_DEFAULTS = {
         "obs_camera_key": "camera_head",
         "home_position": _INSPIRE_HOME,
         "home_wait": 3,
+        "home_hand": {"left": _INSPIRE_HAND_HOME, "right": _INSPIRE_HAND_HOME},
     },
 }
 
@@ -169,6 +178,13 @@ def load_config(config_path: str | None, logger) -> dict:
     jt_def = dict(DEFAULT_CONFIG.get("joints") or {})
     jt_user = config.get("joints") if isinstance(config.get("joints"), dict) else {}
     merged["joints"] = {**jt_def, **jt_user}
+
+    # Deep-merge home_hand so that a user who only sets `left` keeps the
+    # hand_type default for `right` (setdefault above only fires if the whole
+    # home_hand key is missing).
+    hh_def = dict(hand_defaults.get("home_hand") or {})
+    hh_user = config.get("home_hand") if isinstance(config.get("home_hand"), dict) else {}
+    merged["home_hand"] = {**hh_def, **hh_user}
 
     legacy_jt = config.get("joint_wire_trace")
     if isinstance(legacy_jt, dict):

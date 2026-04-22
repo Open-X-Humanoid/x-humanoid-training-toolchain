@@ -432,21 +432,16 @@ class PolicyAgentNode(Node):
     def reset_home(self):
         home_pos = self.config["home_position"]
         home_wait = self.config["home_wait"]
+        home_hand = self.config["home_hand"]
 
         self.get_logger().info("Resetting to home position...")
         time.sleep(home_wait)
         self.reach_target_joint(home_pos)
 
-        if self.hand_type == "brainco":
-            self.control_hand("left", [99] * 6)
-            self.control_hand("right", [99] * 6)
-        elif self.hand_type == "inspire":
-            self.control_hand("left", 1.0)
-            self.control_hand("right", 1.0)
-        else:
-            raise ValueError(
-                f"hand_type must be one of {sorted(HAND_TYPES)}, got {self.hand_type!r}"
-            )
+        # control_hand dispatches on hand_type internally; pass the configured
+        # value through — format (scalar vs 6-list) is validated downstream.
+        self.control_hand("left", home_hand["left"])
+        self.control_hand("right", home_hand["right"])
 
         self.get_logger().info("Home position reached")
 
