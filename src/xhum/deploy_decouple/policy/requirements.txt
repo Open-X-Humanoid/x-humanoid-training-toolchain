@@ -1,6 +1,7 @@
-# Python 3.12+ environment for ../comms/policy_server.py (imports PolicyAgent from this dir)
+# Python 3.12+ environment for ../comms/policy_server.py (imports PolicyAgent from this dir).
 # Install LeRobot from your toolchain submodule, e.g.:
 #   pip install -e ../../../../lerobot
+# pyzmq is imported by ../comms/policy_server.py, which runs in this same env.
 numpy>=2.0.0
 opencv-python-headless>=4.9.0
 pyzmq>=26.0.0

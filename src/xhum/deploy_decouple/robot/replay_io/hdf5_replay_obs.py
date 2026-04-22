@@ -1,10 +1,17 @@
 # -*- coding: utf-8 -*-
-"""Load observation trajectories from HDF5 for replay-over-ZMQ (no ROS imports)."""
+"""Load observation trajectories from HDF5 for replay-over-ZMQ (no ROS imports).
+
+Public API:
+  - ``load_replay_obs_trajectory`` — used by ``mode=replay`` / ``mode=replay_debug``
+  - ``load_aligned_joint_timeseries`` — kept for external offline eval scripts
+    (e.g. ``scripts/eval_policy_from_hdf5.py``); not called in-tree
+"""
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from io import BytesIO
-from typing import Any
+from typing import Any, Tuple
 
 import h5py
 import numpy as np
@@ -137,10 +144,9 @@ def _rgb_images_group_pick(grp: h5py.Group, obs_camera_key: str) -> h5py.Dataset
         return grp["camera_camera"]
     if obs_camera_key == "camera_head" and "camera_head_camera" in keys:
         return grp["camera_head_camera"]
-    if obs_camera_key not in keys:
-        for k in keys:
-            if obs_camera_key in k or k.startswith(obs_camera_key):
-                return grp[k]
+    for k in keys:
+        if obs_camera_key in k or k.startswith(obs_camera_key):
+            return grp[k]
     raise KeyError(
         f"observations/rgb_images has keys {keys}; set replay_images_h5_key "
         f"(model / obs uses {obs_camera_key!r})"
@@ -179,9 +185,7 @@ def _resolve_image_dataset(
         if path in f:
             return f[path]
 
-    grp = f.get("observations/images")
-    if grp is None:
-        grp = f.get("observation/images")
+    grp = f.get("observations/images") or f.get("observation/images")
     if grp is not None and isinstance(grp, h5py.Group):
         keys = sorted(grp.keys())
         if obs_camera_key in keys:
@@ -236,45 +240,35 @@ def _resolve_state_array(f: h5py.File, state_h5_key: str | None) -> np.ndarray:
     )
 
 
-def load_aligned_joint_timeseries(
-    h5_path: str,
-    *,
-    obs_camera_key: str,
-    images_h5_key: str | None,
-    state_h5_key: str | None,
-    logger: Any,
-) -> np.ndarray:
-    """Joint/state array ``(T, D)`` with ``T`` equal to ``len(load_replay_obs_trajectory(...))``.
+def _aligned_len(t_img: int, t_st: int, logger: Any) -> int:
+    """Return ``min(t_img, t_st)``; warn when the two don't match."""
+    t = min(t_img, t_st)
+    if t_img != t_st:
+        logger.warning(
+            f"HDF5 image length {t_img} != state length {t_st}; using first {t} frames"
+        )
+    return t
 
-    Use this when comparing policy actions to HDF5 **next-frame** joint targets.
+
+def _frame_decoder(
+    img_ds: h5py.Dataset | np.ndarray,
+) -> Tuple[int, Callable[[int], np.ndarray], str]:
+    """Return ``(t_img, decode(i) -> (H,W,3) uint8 RGB, layout_tag)`` for either layout.
+
+    Handles the two HDF5 image shapes we see in the wild — JPEG bytes per row
+    (``(T,)`` object) and dense 4D (``(T,H,W,3)`` / ``(T,3,H,W)``) — behind a
+    single closure so callers can drop their branching.
     """
-    with h5py.File(h5_path, "r") as f:
-        img_ds = _resolve_image_dataset(f, obs_camera_key, images_h5_key)
-        state_arr = np.asarray(_resolve_state_array(f, state_h5_key), dtype=np.float32)
-        if state_arr.ndim != 2:
-            raise ValueError(f"state dataset must be 2d (T, D), got {state_arr.shape}")
-
-        t_st = state_arr.shape[0]
-
-        if isinstance(img_ds, h5py.Dataset) and _dataset_is_jpeg_object_stack(img_ds):
-            t_img = img_ds.shape[0]
-            t = min(t_img, t_st)
-            if t_img != t_st:
-                logger.warning(
-                    f"HDF5 image length {t_img} != state length {t_st}; using first {t} frames"
-                )
-            return np.asarray(state_arr[:t], dtype=np.float32)
-
-        rgb = np.asarray(img_ds)
-        if rgb.ndim != 4:
-            raise ValueError(f"image dataset must be 4d (T,H,W,C) or (T,C,H,W), got {rgb.shape}")
-        t_img = rgb.shape[0]
-        t = min(t_img, t_st)
-        if t_img != t_st:
-            logger.warning(
-                f"HDF5 image length {t_img} != state length {t_st}; using first {t} frames"
-            )
-        return np.asarray(state_arr[:t], dtype=np.float32)
+    if isinstance(img_ds, h5py.Dataset) and _dataset_is_jpeg_object_stack(img_ds):
+        return (
+            img_ds.shape[0],
+            lambda i: _to_uint8_hwc(_decode_jpeg_cell(img_ds[i])),
+            "JPEG stack",
+        )
+    rgb = np.asarray(img_ds)
+    if rgb.ndim != 4:
+        raise ValueError(f"image dataset must be 4d (T,H,W,C) or (T,C,H,W), got {rgb.shape}")
+    return rgb.shape[0], lambda i: _to_uint8_hwc(rgb[i]), "dense 4D"
 
 
 def load_replay_obs_trajectory(
@@ -285,55 +279,50 @@ def load_replay_obs_trajectory(
     state_h5_key: str | None,
     logger: Any,
 ) -> list[dict[str, Any]]:
-    """Return one observation dict per timestep (``comms`` PolicyClient / policy_server wire format)."""
-    # All reads must happen while the file is open (Dataset handles go stale after close).
+    """Return one observation dict per timestep (wire-format for ``PolicyClient``)."""
     with h5py.File(h5_path, "r") as f:
         img_ds = _resolve_image_dataset(f, obs_camera_key, images_h5_key)
-        state_arr = np.asarray(_resolve_state_array(f, state_h5_key))
-
+        state_arr = np.asarray(_resolve_state_array(f, state_h5_key), dtype=np.float32)
         if state_arr.ndim != 2:
             raise ValueError(f"state dataset must be 2d (T, D), got {state_arr.shape}")
 
-        t_st = state_arr.shape[0]
+        t_img, decode, layout = _frame_decoder(img_ds)
+        t = _aligned_len(t_img, state_arr.shape[0], logger)
 
-        if isinstance(img_ds, h5py.Dataset) and _dataset_is_jpeg_object_stack(img_ds):
-            t_img = img_ds.shape[0]
-            t = min(t_img, t_st)
-            if t_img != t_st:
-                logger.warning(
-                    f"HDF5 image length {t_img} != state length {t_st}; using first {t} frames"
-                )
-            out: list[dict[str, Any]] = []
-            for i in range(t):
-                img = _decode_jpeg_cell(img_ds[i])
-                img = _to_uint8_hwc(img)
-                vec = np.asarray(state_arr[i], dtype=np.float32).reshape(-1)
-                out.append({"images": {obs_camera_key: img}, "arm_gripper_joints": vec})
-            logger.info(
-                f"Loaded {len(out)} replay observations from {h5_path} "
-                f"(camera={obs_camera_key!r}, JPEG stack)"
-            )
-            return out
+        out: list[dict[str, Any]] = [
+            {
+                "images": {obs_camera_key: decode(i)},
+                "arm_gripper_joints": state_arr[i].reshape(-1),
+            }
+            for i in range(t)
+        ]
+        logger.info(
+            f"Loaded {len(out)} replay observations from {h5_path} "
+            f"(camera={obs_camera_key!r}, layout={layout})"
+        )
+        return out
 
-        rgb = np.asarray(img_ds)
-        if rgb.ndim != 4:
-            raise ValueError(f"image dataset must be 4d (T,H,W,C) or (T,C,H,W), got {rgb.shape}")
 
-        t_img = rgb.shape[0]
-        t = min(t_img, t_st)
-        if t_img != t_st:
-            logger.warning(
-                f"HDF5 image length {t_img} != state length {t_st}; using first {t} frames"
-            )
+def load_aligned_joint_timeseries(
+    h5_path: str,
+    *,
+    obs_camera_key: str,
+    images_h5_key: str | None,
+    state_h5_key: str | None,
+    logger: Any,
+) -> np.ndarray:
+    """Aligned joint/state array ``(T, D)`` — same ``T`` as ``load_replay_obs_trajectory``.
 
-        out = []
-        for i in range(t):
-            frame = rgb[i]
-            img = _to_uint8_hwc(frame)
-            vec = np.asarray(state_arr[i], dtype=np.float32).reshape(-1)
-            out.append({"images": {obs_camera_key: img}, "arm_gripper_joints": vec})
+    Public API for **external** offline eval scripts (``scripts/eval_policy_from_hdf5.py``
+    and friends, which are gitignored). Not called in-tree — kept here so those
+    scripts don't duplicate the image/state alignment logic.
+    """
+    with h5py.File(h5_path, "r") as f:
+        img_ds = _resolve_image_dataset(f, obs_camera_key, images_h5_key)
+        state_arr = np.asarray(_resolve_state_array(f, state_h5_key), dtype=np.float32)
+        if state_arr.ndim != 2:
+            raise ValueError(f"state dataset must be 2d (T, D), got {state_arr.shape}")
 
-    logger.info(
-        f"Loaded {len(out)} replay observations from {h5_path} (camera={obs_camera_key!r})"
-    )
-    return out
+        t_img, _decode, _layout = _frame_decoder(img_ds)
+        t = _aligned_len(t_img, state_arr.shape[0], logger)
+        return state_arr[:t]

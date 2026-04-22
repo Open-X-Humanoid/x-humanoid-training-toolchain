@@ -2,19 +2,19 @@
 
 **[English](./README.md)**
 
-LeRobot / ACT 推理依赖 **Python 3.12**（torch、`lerobot`）。Ubuntu 22.04 上 ROS2 常用 **Python 3.10**。两者塞进同一进程容易出问题，因此拆成：
+LeRobot / ACT 推理依赖 **Python 3.12**（torch、`lerobot`）。Ubuntu 22.04 上 ROS2 常用 **Python 3.10**。两者塞进同一进程容易出问题。本目录把「**目录 = Python 环境**」作为硬约束，而且**不需要 `pip install` 本目录**（每个入口脚本启动时自己注入 `sys.path`）：
 
-| 目录 | Python | 作用 |
-|------|--------|------|
-| `policy/` | **3.12+** | 仅 **`PolicyAgent`**（LeRobot / ACT）；由策略服务进程导入 |
-| `comms/` | **3.12+**（服务）/ **3.10**（客户端） | **`policy_server.py`**、**`policy_client.py`**、**`zmq_obs_codec.py`**、**`utils.py`** — ZMQ 报文与进程 |
-| `robot/` | **3.10**（ROS） | 机器人与 HDF5；**`mode=model`** 或 **`mode=replay`** 时从 `comms/` 加载 **`PolicyClient`** |
+| 目录 | Python 环境 | 作用 |
+|------|-------------|------|
+| `policy/` | **3.12+**（LeRobot / torch） | `policy_agent.py` + `policy_server.py`；服务进程及其依赖都在这里 |
+| `robot/`  | **3.10**（ROS2 / rclpy）     | `ros2_node.py` + `policy_client.py` + `replay_debug.py` + YAML 加载 + HDF5 回放 I/O |
+| `wire/`   | **两端共享**（只允许 numpy + stdlib） | `obs_codec.py`（协议）+ `trace_io.py`（PNG / 关节落盘）—— 改动需双端同步 |
 
 **为何 ROS 侧做 Client：** 控制节拍在 ROS 进程里，每步用当前观测**主动请求**一次动作，由策略进程 **bind** 并 **应答**推理结果，更符合「闭环拉取」习惯。
 
-报文格式见 `comms/policy_server.py` 文件头注释。
+报文格式见 `policy/policy_server.py` 文件头注释（实现在 `wire/obs_codec.py`）。
 
-**模型路径：** 只在启动 **`comms/policy_server.py`** 时用 **`--model_path`**；**机端 `robot/*.yaml` 不要写、也不需要 `model_path`**（ZMQ 只传观测与动作，Client 不知道也不应知道 checkpoint 目录）。换模型请 **重启策略服务并更换其 `--model_path`**。
+**模型路径：** 只在启动 **`policy/policy_server.py`** 时用 **`--model_path`**；**机端 `robot/config/*.yaml` 不要写、也不需要 `model_path`**（ZMQ 只传观测与动作，Client 不知道也不应知道 checkpoint 目录）。换模型请 **重启策略服务并更换其 `--model_path`**。
 
 ---
 
@@ -22,34 +22,39 @@ LeRobot / ACT 推理依赖 **Python 3.12**（torch、`lerobot`）。Ubuntu 22.04
 
 ```
 deploy_decouple/
-├── README.md                 # 英文
-├── README_zh.md              # 本文件（中文）
-├── policy/
-│   ├── policy_agent.py       # ACT 封装（与 src/xhum/deploy/policy_agent.py 保持同步）
+├── README.md                  # 英文
+├── README_zh.md               # 本文件（中文）
+├── policy/                    # Py 3.12 环境（LeRobot + torch）
+│   ├── policy_agent.py        # ACT 封装（与 src/xhum/deploy/policy_agent.py 保持同步）
+│   ├── policy_server.py       # ZMQ REP 服务；PolicyAgent 同目录兄弟
 │   └── requirements.txt
-├── comms/
-│   ├── policy_server.py      # ZMQ REP 策略服务（Py3.12 + LeRobot；导入 PolicyAgent）
-│   ├── policy_client.py      # ZMQ REQ 客户端（numpy + pyzmq）；model / replay / replay_debug
-│   ├── zmq_obs_codec.py      # 观测 multipart 编解码
-│   └── utils.py              # 存图 / YAML 整型等共用工具
-├── robot/
-│   ├── replay_io/            # HDF5 加载（开环动作 + replay/ZMQ 观测）
-│   ├── settings/             # YAML 合并 + PolicyClient 构造（无 ROS）
-│   ├── config/               # 示例 YAML（复制到 robot/ 根目录或写绝对路径）
-│   ├── ros2_node_zmq.py      # 节点实现（也可直接运行）
-│   ├── run.py                # 薄入口 — model / replay / replay_actions（ROS2）或 replay_debug（无 ROS）
+├── robot/                     # Py 3.10 环境（ROS2 / rclpy）
+│   ├── run.py                 # 入口：peek YAML `mode` 分发
+│   ├── ros2_node.py           # PolicyAgentNode — model / replay / replay_actions
+│   ├── replay_debug.py        # 无 rclpy 的 HDF5 → ZMQ 调试循环
+│   ├── policy_client.py       # ZMQ REQ 客户端（numpy + pyzmq）
+│   ├── config_loader.py       # YAML 合并 + PolicyClient 工厂（无 ROS 依赖）
+│   ├── replay_io/             # HDF5 加载（开环动作 + replay/ZMQ 观测）
+│   ├── config/                # 仅 `config_zmq.example.yaml` 入库，其它 YAML 已 .gitignore
 │   └── requirements.txt
-├── launch/                   # 示例 shell 启动脚本（见 launch/README.md）
+├── wire/                      # 两端共享；只允许 numpy + stdlib
+│   ├── obs_codec.py           # 协议 meta + multipart 编解码（含 op: infer/reset）
+│   └── trace_io.py            # PNG / 关节落盘 helpers（client 与 server 都用）
+├── launch/                    # 示例 shell 启动脚本（见 launch/README.md）
 │   ├── start_policy.example.sh
 │   └── start_robot.example.sh
-└── scripts/                  # 说明与脚本见 scripts/（入口 scripts/README.md）
+└── scripts/                   # 说明与脚本见 scripts/README.md
 ```
+
+**本目录不需 `pip install`**。每个入口脚本（`policy/policy_server.py`、
+`robot/run.py`）在启动时把同级 + `wire/` 注入 `sys.path`。依赖按环境各自在
+`policy/requirements.txt` 和 `robot/requirements.txt` 管理。
 
 ---
 
 ## 更新摘要（分支 `refactor/decouple-toolchain`）
 
-- **目录重组**：原 `algorithm/`、`ros_bridge/` 等迁入 `policy/`、`comms/`、`robot/`、`launch/` 等；ZMQ 与 ROS 入口路径以本 README 目录树为准。
+- **目录重组**：按 env 边界组织——`policy/`（Py 3.12）、`robot/`（Py 3.10）、`wire/`（共享）。原 `comms/` 目录已拆解（`policy_server.py` → `policy/`、`policy_client.py` → `robot/`、codec 与 helpers → `wire/`）。原 `robot/settings/` 拍平为 `robot/config_loader.py`。入口路径以本 README 目录树为准。
 - **PolicyAgent**：若 `pretrained_model/` 下存在 `policy_preprocessor.json` 与 `policy_postprocessor.json`，推理链路与 LeRobot `predict_action` 一致（观测按训练统计量归一化，动作反归一化后再返回）；缺少上述文件时保持旧行为（直接 `select_action`，无 denorm）。
 - **HDF5 评测 / 本地脚本**：见 **[`scripts/README.md`](./scripts/README.md)**（细节均在 `scripts/` 下说明）。
 - **`src/xhum/deploy/policy_agent.py`**：与 `deploy_decouple/policy/policy_agent.py` 保持同步（同一套 pre/post processor 逻辑）。
@@ -63,7 +68,7 @@ deploy_decouple/
 1. **终端 A — 策略服务（Python 3.12，例如 `conda activate lerobot-0.5.1`）**
 
 ```bash
-cd src/xhum/deploy_decouple/comms
+cd src/xhum/deploy_decouple/policy
 export PYTHONPATH=/你的路径/x-humanoid-training-toolchain/lerobot/src:$PYTHONPATH
 pip install pyzmq   # 本环境装一次即可
 
@@ -118,7 +123,7 @@ python3 run.py --config ./my_robot.yaml
 
 - 复制 **`robot/config/config_zmq.example.yaml`** → **`my_robot.yaml`**（放在 `robot/` 下）。
 - **机端 YAML 不含 `model_path`**；与 ZMQ 相关的只有 **`policy_server_url`** 等。换模型只改 **`policy_server.py --model_path`** 并重启服务。
-- 示例 YAML 内为**中文注释**，说明：`mode`（`model` / `replay` / `replay_actions` / `replay_debug`）、`hand_type`、**`h5_path`**、可选 **`replay_*_h5_key`**、**`camera_name`**（**仅 model** 订阅实时相机）、`action_rate`、**`obs_camera_key`**、**`image_save`**、**`joints`**（关节向量落盘与 ZMQ 编解码校验）、**`arm_command.mode`**（`cmd_pos` 或 `flex_freq`；手臂话题名写死在 `ros2_node_zmq.py`）等；旧字段 **`replay_via_zmq`** 已弃用（见示例 YAML 顶栏）。
+- 示例 YAML 内为**中文注释**，说明：`mode`（`model` / `replay` / `replay_actions` / `replay_debug`）、`hand_type`、**`h5_path`**、可选 **`replay_*_h5_key`**、**`camera_name`**（**仅 model** 订阅实时相机）、`action_rate`、**`obs_camera_key`**、**`image_save`**、**`joints`**（关节向量落盘与 ZMQ 编解码校验）、**`arm_command.mode`**（`cmd_pos` 或 `flex_freq`；手臂话题名写死在 `ros2_node.py`）等；旧字段 **`replay_via_zmq`** 已弃用（见示例 YAML 顶栏）。
 
 ---
 
@@ -129,7 +134,7 @@ python3 run.py --config ./my_robot.yaml
 **用 HDF5 验证 ZMQ**（与 `mode=replay` 同链路，不启 ROS）：
 
 1. **终端 A** — 策略服务（**Python ≥3.12**、LeRobot，与线上一致）：  
-   `cd comms && python policy_server.py --model_path /path/to/pretrained_model --bind tcp://127.0.0.1:5555`
+   `cd policy && python policy_server.py --model_path /path/to/pretrained_model --bind tcp://127.0.0.1:5555`
 
 2. 复制 **`robot/config/config_zmq.example.yaml`** 为例如 **`robot/replay_debug.yaml`**，设置 **`mode: replay_debug`**、**`h5_path`**、**`policy_server_url: tcp://127.0.0.1:5555`**，并按数据对齐 **`obs_camera_key`** / 可选 **`replay_*_h5_key`**。
 
@@ -160,7 +165,7 @@ joints:
 2. **策略服务**（与 `--save_images_dir` 等并列）：
 
 ```bash
-cd src/xhum/deploy_decouple/comms
+cd src/xhum/deploy_decouple/policy
 python policy_server.py \
   --model_path /path/to/pretrained_model \
   --bind tcp://127.0.0.1:5555 \
@@ -207,4 +212,4 @@ python policy_server.py \
 
 ## 可选：systemd
 
-**`mode=model` 或 `mode=replay`** 时建议用 **systemd** / **supervisor** 托管 **`comms/policy_server.py`**；**`mode=replay_actions`** 不需要托管策略服务。
+**`mode=model` 或 `mode=replay`** 时建议用 **systemd** / **supervisor** 托管 **`policy/policy_server.py`**；**`mode=replay_actions`** 不需要托管策略服务。

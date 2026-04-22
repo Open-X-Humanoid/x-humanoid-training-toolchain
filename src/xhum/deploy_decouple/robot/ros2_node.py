@@ -2,25 +2,27 @@
 # -*- coding: utf-8 -*-
 """ROS2 deploy node (Python 3.10) with remote policy over ZMQ.
 
+This file runs in the ROS env only (rclpy / cv_bridge / bodyctrl_msgs). Torch
+and LeRobot stay in the policy process — this side is pure numpy + pyzmq.
+
 Top-level ``mode`` (YAML):
 
-- **model** — Live camera + ``PolicyClient`` / ZMQ + ROS command publish (same I/O
-  ideas as ``src/xhum/deploy/ros2_deploy.py``; torch stays in the policy server).
-
-- **replay** — HDF5 RGB/state each step → ZMQ ``policy_server`` → publish returned
-  actions on ROS (no live camera subscriptions).
-
+- **model**          — Live camera + ``PolicyClient`` / ZMQ + ROS command publish
+                       (same I/O shape as ``src/xhum/deploy/ros2_deploy.py``).
+- **replay**         — HDF5 RGB/state each step → ZMQ ``policy_server`` → publish
+                       returned actions on ROS (no live camera subscriptions).
 - **replay_actions** — Open-loop: stream recorded joint commands from HDF5 to ROS
-  only (no ZMQ, no policy server).
+                       only (no ZMQ, no policy server).
 
-- **replay_debug** — HDF5 → ZMQ like **replay**, but **no ROS2** (exits before ``rclpy``).
+``mode: replay_debug`` is handled by ``replay_debug.py``; ``run.py`` dispatches
+to it before this module is ever imported, so this file can assume rclpy is
+available. Do not add a replay_debug branch here.
 
 Legacy: ``mode: replay`` + ``replay_via_zmq: false`` is accepted and mapped to
 ``replay_actions`` with a deprecation warning.
 
-Run (after sourcing ROS) for model / replay / replay_actions on robot:
+Entry point:
   python3 run.py --config /path/to/config_zmq.yaml
-  # or: python3 ros2_node_zmq.py --config ...
 """
 
 from __future__ import annotations
@@ -32,126 +34,13 @@ import time
 from pathlib import Path
 from typing import Tuple
 
-# Allow running as a loose script (not installed as a package)
-_THIS_DIR = Path(__file__).resolve().parent
-if str(_THIS_DIR) not in sys.path:
-    sys.path.insert(0, str(_THIS_DIR))
-
-
-def run_replay_debug_main(config_path: str) -> int:
-    """Headless HDF5 → ZMQ (no rclpy). Only imported/called before ROS stack loads."""
-    import time as time_mod
-
-    import numpy as np
-
-    from settings.zmq_deploy_config import _make_policy_client, load_config
-    from replay_io.hdf5_replay_obs import load_replay_obs_trajectory
-
-    class _Log:
-        def info(self, msg: str) -> None:
-            print(msg)
-
-        def warning(self, msg: str) -> None:
-            print(f"[WARN] {msg}", file=sys.stderr)
-
-        def error(self, msg: str) -> None:
-            print(f"[ERROR] {msg}", file=sys.stderr)
-
-    log = _Log()
-    cfg = load_config(config_path, log)
-    if cfg.get("mode") != "replay_debug":
-        log.error(f"mode must be 'replay_debug' (got {cfg.get('mode')!r})")
-        return 1
-
-    h5 = cfg.get("h5_path")
-    if not h5 or str(h5) == "PATH_TO_H5":
-        log.error("replay_debug: set h5_path in YAML to trajectory.hdf5")
-        return 1
-
-    url = cfg.get("policy_server_url", "")
-    if not url:
-        log.error("replay_debug: set policy_server_url in YAML")
-        return 1
-
-    cam_key = cfg["obs_camera_key"]
-    img_key = cfg.get("replay_images_h5_key") or None
-    st_key = cfg.get("replay_state_h5_key") or None
-
-    try:
-        obs_list = load_replay_obs_trajectory(
-            str(h5),
-            obs_camera_key=cam_key,
-            images_h5_key=img_key if img_key else None,
-            state_h5_key=st_key if st_key else None,
-            logger=log,
-        )
-    except Exception as e:
-        log.error(f"load HDF5 observations failed: {e}")
-        return 1
-
-    if not obs_list:
-        log.error("empty observation list")
-        return 1
-
-    max_steps = int(cfg.get("replay_debug_max_steps", 0) or 0)
-    if max_steps <= 0:
-        max_steps = len(obs_list)
-    else:
-        max_steps = min(max_steps, len(obs_list))
-
-    action_rate = float(cfg.get("action_rate", 20.0))
-    period = 1.0 / max(action_rate, 1e-6)
-
-    zmq_to = int(cfg.get("policy_zmq_timeout_ms", 120_000))
-    log.info(
-        f"replay_debug: {max_steps} ZMQ inference steps  policy_server={url}  "
-        f"policy_zmq_timeout_ms={zmq_to} (0 = unlimited)  "
-        f"(no rclpy, no publishers; same PolicyClient path as mode=replay)"
-    )
-    if (cfg.get("image_save") or {}).get("enabled"):
-        log.info("image_save.enabled=true")
-
-    client = _make_policy_client(cfg, log)
-    try:
-        for i in range(max_steps):
-            t0 = time_mod.perf_counter()
-            action = client.inference(obs_list[i])
-            dt = time_mod.perf_counter() - t0
-            row = action[0]
-            log.info(
-                f"step {i + 1}/{max_steps}  wall={dt:.3f}s  action_shape={tuple(action.shape)}  "
-                f"|a|_mean={float(np.mean(np.abs(row))):.4f}"
-            )
-            time_mod.sleep(period)
-    finally:
-        client.close()
-
-    log.info("replay_debug: finished OK")
-    return 0
-
-
-def _maybe_run_replay_debug_early() -> None:
-    """If ``--config`` YAML has ``mode: replay_debug``, run headless path and exit (no ROS imports)."""
-    if __name__ != "__main__" or "--config" not in sys.argv:
-        return
-    import yaml
-
-    p = argparse.ArgumentParser(add_help=False)
-    p.add_argument("--config", type=str, default=None)
-    args, _ = p.parse_known_args()
-    if not args.config:
-        return
-    try:
-        with open(args.config, "r", encoding="utf-8") as f:
-            raw = yaml.safe_load(f) or {}
-    except OSError:
-        return
-    if raw.get("mode") != "replay_debug":
-        return
-    raise SystemExit(run_replay_debug_main(args.config))
-
-
-_maybe_run_replay_debug_early()
+# Inject this dir for sibling imports (config_loader, policy_client, replay_io)
+# so nothing needs ``pip install``. Any script invoked via ``run.py`` already
+# ran the same trick; we repeat it here in case someone imports ros2_node
+# directly from another tool.
+_HERE = Path(__file__).resolve().parent
+if str(_HERE) not in sys.path:
+    sys.path.insert(0, str(_HERE))
 
 import numpy as np
 import rclpy
@@ -182,7 +71,12 @@ try:
 except ImportError:
     BRAINCO_AVAILABLE = False
 
-from settings.zmq_deploy_config import _make_policy_client, load_config
+from config_loader import (
+    ARM_CMD_MODES,
+    HAND_TYPES,
+    make_policy_client,
+    load_config,
+)
 from replay_io.hdf5_actions import load_action_trajectory
 from replay_io.hdf5_replay_obs import load_replay_obs_trajectory
 
@@ -191,22 +85,8 @@ _ARM_STATUS_TOPIC = "/arm/status"
 _ARM_CMD_POS_TOPIC = "/arm/cmd_pos"
 _ARM_FLEX_FREQ_TOPIC = "/joint_states_flex_freq"
 
-_ARM_CMD_MODES = frozenset({"cmd_pos", "flex_freq"})
-_HAND_TYPES = frozenset({"brainco", "inspire"})
-_RUN_MODES = frozenset({"model", "replay", "replay_actions"})
-
-_BRAINCO_HOME = [
-    -0.05916397, 0.11694484, 0.00816471, -1.6296118, -0.18107964, -0.1322771, -0.08812793,
-    -0.00609963, 0.05809595, -0.0326848, -1.6615903, -0.15082923, 0.03735191, 0.00886455,
-]
-
-_INSPIRE_HOME = [
-    -0.1525799448897199, 0.06799564128968774, 0.1352429110829423,
-    -1.1551348918821753, 0.12439771977866568, -0.36139144432253956,
-    -0.00591924481275605, -0.29126099842350656, -0.003778287841052544,
-    -0.13665378849680831, -0.8683540414019328, -0.287210096964022,
-    -0.4483082608478825, 0.19435190805574742,
-]
+# Subset handled by PolicyAgentNode (replay_debug exits before rclpy).
+_ROS_RUN_MODES = frozenset({"model", "replay", "replay_actions"})
 
 
 def load_hdf5_actions(h5_path: str, logger) -> list[np.ndarray]:
@@ -238,7 +118,7 @@ class PolicyAgentNode(Node):
 
         if self.mode == "model":
             url = self.config["policy_server_url"]
-            self.action_policy = _make_policy_client(self.config, self.get_logger())
+            self.action_policy = make_policy_client(self.config, self.get_logger())
             self.get_logger().info(f"Mode=MODEL  policy_server={url}")
             if (self.config.get("image_save") or {}).get("enabled"):
                 self.get_logger().info(
@@ -247,7 +127,7 @@ class PolicyAgentNode(Node):
         elif self.mode == "replay":
             self.h5_path = self.config["h5_path"]
             url = self.config["policy_server_url"]
-            self.action_policy = _make_policy_client(self.config, self.get_logger())
+            self.action_policy = make_policy_client(self.config, self.get_logger())
             self.get_logger().info(
                 f"Mode=REPLAY  h5={self.h5_path}  policy_server={url}  "
                 "(HDF5 RGB/state → ZMQ → actions on ROS)"
@@ -264,7 +144,7 @@ class PolicyAgentNode(Node):
             )
         else:
             raise ValueError(
-                f"config.mode must be one of {sorted(_RUN_MODES)}, got {self.mode!r}"
+                f"config.mode must be one of {sorted(_ROS_RUN_MODES)}, got {self.mode!r}"
             )
 
         self.left_hand_pos = np.zeros(6)
@@ -276,7 +156,7 @@ class PolicyAgentNode(Node):
             self._setup_inspire_hands()
         else:
             raise ValueError(
-                f"config.hand_type must be one of {sorted(_HAND_TYPES)}, got {self.hand_type!r}"
+                f"config.hand_type must be one of {sorted(HAND_TYPES)}, got {self.hand_type!r}"
             )
 
         self.joint_state_sub = self.create_subscription(MotorStatusMsg, _ARM_STATUS_TOPIC, self._arm_callback, 10)
@@ -312,9 +192,9 @@ class PolicyAgentNode(Node):
         if "mode" not in ac:
             raise ValueError("arm_command must contain key 'mode'")
         self._arm_cmd_mode = ac["mode"]
-        if self._arm_cmd_mode not in _ARM_CMD_MODES:
+        if self._arm_cmd_mode not in ARM_CMD_MODES:
             raise ValueError(
-                f"arm_command.mode must be one of {sorted(_ARM_CMD_MODES)}, got {self._arm_cmd_mode!r}"
+                f"arm_command.mode must be one of {sorted(ARM_CMD_MODES)}, got {self._arm_cmd_mode!r}"
             )
         self.dual_arm_controller = None
         self.arm_flex_freq_publisher = None
@@ -407,7 +287,7 @@ class PolicyAgentNode(Node):
         if self.hand_type == "inspire":
             return np.concatenate([arm[:7], lh, arm[7:], rh])
         raise ValueError(
-            f"hand_type must be one of {sorted(_HAND_TYPES)}, got {self.hand_type!r}"
+            f"hand_type must be one of {sorted(HAND_TYPES)}, got {self.hand_type!r}"
         )
 
     def _construct_dual_arm_ctrl_msg(self, target_joint: list[float]) -> CmdSetMotorPosition:
@@ -451,7 +331,7 @@ class PolicyAgentNode(Node):
             self.arm_flex_freq_publisher.publish(out)
         else:
             raise RuntimeError(
-                f"arm_command.mode must be one of {sorted(_ARM_CMD_MODES)}, got {self._arm_cmd_mode!r}"
+                f"arm_command.mode must be one of {sorted(ARM_CMD_MODES)}, got {self._arm_cmd_mode!r}"
             )
 
     def reach_target_joint(self, target_joint) -> bool:
@@ -476,7 +356,7 @@ class PolicyAgentNode(Node):
             self._control_hand_inspire(side, position)
         else:
             raise ValueError(
-                f"hand_type must be one of {sorted(_HAND_TYPES)}, got {self.hand_type!r}"
+                f"hand_type must be one of {sorted(HAND_TYPES)}, got {self.hand_type!r}"
             )
 
     def _control_hand_brainco(self, side: str, position):
@@ -527,7 +407,7 @@ class PolicyAgentNode(Node):
             right_hand = action[20:]
         else:
             raise ValueError(
-                f"hand_type must be one of {sorted(_HAND_TYPES)}, got {self.hand_type!r}"
+                f"hand_type must be one of {sorted(HAND_TYPES)}, got {self.hand_type!r}"
             )
 
         self._publish_arm_target(target_joint)
@@ -565,7 +445,7 @@ class PolicyAgentNode(Node):
             self.control_hand("right", 1.0)
         else:
             raise ValueError(
-                f"hand_type must be one of {sorted(_HAND_TYPES)}, got {self.hand_type!r}"
+                f"hand_type must be one of {sorted(HAND_TYPES)}, got {self.hand_type!r}"
             )
 
         self.get_logger().info("Home position reached")
@@ -574,9 +454,27 @@ class PolicyAgentNode(Node):
         time.sleep(3)
         self.get_logger().info("Warm-up completed")
 
+    def close(self) -> None:
+        """Release the ZMQ client; safe to call more than once."""
+        client = getattr(self, "action_policy", None)
+        if client is None:
+            return
+        self.action_policy = None
+        try:
+            client.close()
+        except Exception as e:
+            self.get_logger().warning(f"policy client close failed: {e}")
+
     def run(self):
         self.warm_up()
         self.reset_home()
+
+        if self.action_policy is not None:
+            # Fresh episode: drop any ACT buffer left from a previous client session.
+            try:
+                self.action_policy.reset()
+            except Exception as e:
+                self.get_logger().warning(f"remote policy reset failed: {e}")
 
         action_rate = self.config.get("action_rate", 20.0)
         action_period = 1.0 / action_rate
@@ -634,13 +532,18 @@ class PolicyAgentNode(Node):
 
 
 def main(args=None):
+    # parse_known_args lets ROS keep its own flags (rclpy.init consumes them).
     parser = argparse.ArgumentParser(description="ROS2 deploy node (ZMQ remote policy)")
     parser.add_argument("--config", type=str, default=None, help="Path to config YAML")
     args_parsed, ros_args = parser.parse_known_args(args)
 
     rclpy.init(args=ros_args)
+    node: PolicyAgentNode | None = None
     try:
         node = PolicyAgentNode(config_path=args_parsed.config)
+        # MultiThreadedExecutor: ROS callbacks (image sync, joint status, hand
+        # state) need to run concurrently with ``node.run()`` on the main
+        # thread. num_threads=3 covers the three subscription groups.
         executor = MultiThreadedExecutor(num_threads=3)
         executor.add_node(node)
 
@@ -651,6 +554,10 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     finally:
+        # close() first to drop the ZMQ socket gracefully; otherwise the
+        # policy_server sees a mid-REQ disconnect and logs an error next tick.
+        if node is not None:
+            node.close()
         rclpy.shutdown()
 
 

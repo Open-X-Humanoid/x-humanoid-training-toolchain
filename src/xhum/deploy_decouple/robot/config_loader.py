@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Shared YAML config + PolicyClient factory (no ROS2 imports)."""
+"""YAML config loading + PolicyClient factory (no ROS2 imports).
+
+Imported by ``ros2_node.py`` and the headless replay_debug path. Keeps
+the ROS node thin: everything YAML-shaped lives here.
+"""
 
 from __future__ import annotations
 
@@ -10,16 +14,11 @@ from typing import Any
 import yaml
 
 
-def _ensure_comms_path() -> None:
-    """Add ``deploy_decouple/comms/`` to ``sys.path`` for ``policy_client`` imports."""
-    _deploy_decouple = Path(__file__).resolve().parent.parent.parent
-    d = _deploy_decouple / "comms"
-    s = str(d)
-    if s not in sys.path:
-        sys.path.insert(0, s)
-
-
-_ARM_CMD_MODES = frozenset({"cmd_pos", "flex_freq"})
+# Single source of truth for the canonical string sets and default home poses.
+# ``ros2_node.py`` imports these — do not copy elsewhere.
+ARM_CMD_MODES = frozenset({"cmd_pos", "flex_freq"})
+HAND_TYPES = frozenset({"brainco", "inspire"})
+RUN_MODES = frozenset({"model", "replay", "replay_actions", "replay_debug"})
 
 _BRAINCO_HOME = [
     -0.05916397, 0.11694484, 0.00816471, -1.6296118, -0.18107964, -0.1322771, -0.08812793,
@@ -85,7 +84,7 @@ DEFAULT_CONFIG = {
 def _normalize_arm_command(config: dict) -> dict:
     if "arm_flex_freq_topic" in config:
         raise ValueError(
-            "Remove arm_flex_freq_topic from your YAML; arm topics are fixed in ros2_node_zmq.py."
+            "Remove arm_flex_freq_topic from your YAML; arm topics are fixed in ros2_node.py."
         )
     default_mode = "cmd_pos"
     has_block = "arm_command" in config and config["arm_command"] is not None
@@ -114,13 +113,9 @@ def _normalize_arm_command(config: dict) -> dict:
     if not isinstance(mode, str) or not mode.strip():
         raise ValueError(f"arm_command.mode must be a non-empty string, got {mode!r}")
     mode = mode.strip()
-    if mode not in _ARM_CMD_MODES:
-        raise ValueError(f"arm_command.mode must be one of {sorted(_ARM_CMD_MODES)}, got {mode!r}")
+    if mode not in ARM_CMD_MODES:
+        raise ValueError(f"arm_command.mode must be one of {sorted(ARM_CMD_MODES)}, got {mode!r}")
     return {"mode": mode}
-
-
-
-_TOP_MODES = frozenset({"model", "replay", "replay_actions", "replay_debug"})
 
 
 def _normalize_run_mode(merged: dict, logger) -> None:
@@ -144,6 +139,10 @@ def _normalize_run_mode(merged: dict, logger) -> None:
 
 
 def load_config(config_path: str | None, logger) -> dict:
+    # Fallback to the example config when no path is given. Only FileNotFoundError
+    # is handled below — a YAML parse error or permission error is treated as
+    # misconfiguration and raised to the caller, because silently merging
+    # DEFAULT_CONFIG would hide real mistakes (wrong mode, wrong hand_type).
     _bridge_root = Path(__file__).resolve().parent.parent
     if config_path is None:
         config_path = str(_bridge_root / "config" / "config_zmq.example.yaml")
@@ -153,9 +152,6 @@ def load_config(config_path: str | None, logger) -> dict:
         logger.info(f"Configuration loaded from: {config_path}")
     except FileNotFoundError:
         logger.warning(f"Config file not found: {config_path}, using defaults")
-        config = {}
-    except Exception as e:
-        logger.error(f"Error loading config: {e}, using defaults")
         config = {}
 
     merged = {**DEFAULT_CONFIG, **config}
@@ -186,14 +182,17 @@ def load_config(config_path: str | None, logger) -> dict:
 
     _normalize_run_mode(merged, logger)
     m = merged.get("mode")
-    if m not in _TOP_MODES:
-        raise ValueError(f"Unknown mode {m!r}; expected one of {sorted(_TOP_MODES)}")
+    if m not in RUN_MODES:
+        raise ValueError(f"Unknown mode {m!r}; expected one of {sorted(RUN_MODES)}")
 
     return merged
 
 
-def _make_policy_client(config: dict, ros_logger: Any):
-    _ensure_comms_path()
+def make_policy_client(config: dict, ros_logger: Any):
+    # Deferred import: PolicyClient lives as a sibling in ``robot/``; importing
+    # it eagerly at module load would pull ``wire/`` into ``sys.path`` as a
+    # side effect of ``policy_client`` loading. Deferring also keeps the
+    # replay_debug path cheap when the caller only needs ``load_config``.
     from policy_client import PolicyClient
 
     url = config["policy_server_url"]

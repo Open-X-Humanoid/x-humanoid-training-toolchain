@@ -1,8 +1,7 @@
 # =============================================================================
-# ROS2 侧配置（Python 3.10）— 与 comms/policy_server.py（Python 3.12）配对
-# 复制到 robot/ 下为 my_robot.yaml 后按需修改；运行：
-#   python3 ros2_node_zmq.py --config ./my_robot.yaml
-# 或：python3 ros2_node_zmq.py --config ./config/config_zmq.example.yaml
+# ROS2 侧配置（Python 3.10）— 与 policy/policy_server.py（Python 3.12）配对
+# 复制到 robot/config/ 下为 my_robot.yaml（会被 .gitignore 忽略），运行：
+#   python3 run.py --config ./config/my_robot.yaml
 # =============================================================================
 
 # -----------------------------------------------------------------------------
@@ -23,7 +22,7 @@ hand_type: inspire
 # 本机部署（ROS 与 policy_server 同一台电脑）— 推荐写法
 # -----------------------------------------------------------------------------
 # 1) 先在一个终端（conda lerobot / Py3.12）启动策略服务，例如：
-#      cd ../comms && python policy_server.py --model_path .../pretrained_model --bind tcp://127.0.0.1:5555
+#      cd ../policy && python policy_server.py --model_path .../pretrained_model --bind tcp://127.0.0.1:5555
 # 2) 再在 ROS 终端启动本节点；下面地址必须与 policy_server 的 --bind 完全一致
 # 机端 YAML 无 model_path：模型仅在 policy_server 进程加载；换模型只改上面命令里的 --model_path 并重启服务。
 policy_server_url: tcp://127.0.0.1:5555
@@ -58,7 +57,7 @@ camera_name: camera
 action_rate: 20.0
 
 # -----------------------------------------------------------------------------
-# 手臂指令下发模式（二选一，只配 mode；话题名在 ros2_node_zmq.py 常量里写死）
+# 手臂指令下发模式（二选一，只配 mode；话题名在 ros2_node.py 常量里写死）
 # -----------------------------------------------------------------------------
 # cmd_pos   : CmdSetMotorPosition -> /arm/cmd_pos
 # flex_freq : JointState（14 rad, vel 全 0）-> /joint_states_flex_freq
