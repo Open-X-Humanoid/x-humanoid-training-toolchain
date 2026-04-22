@@ -1,0 +1,54 @@
+# =============================================================================
+# replay_debug：无 ROS 的 HDF5 → ZMQ 模型测试
+# 运行（在 robot/ 下，Py 3.10 即可，不需要 source ROS）：
+#   python3 run.py --config ./config/replay_debug.yaml
+#
+# 要先在 policy/ 下起 policy_server（Py 3.12，conda activate lerobot-0.5.1）：
+#   python policy_server.py \
+#     --model_path /media/jushen/neil-liu/dataNmodels/model_outputs/dvt217_run_002/checkpoints/200000/pretrained_model \
+#     --bind tcp://127.0.0.1:5555
+# =============================================================================
+
+mode: replay_debug
+
+# inspire | brainco —— 不确定就先跑一步看 state dim；不匹配会很快报错
+hand_type: inspire
+
+policy_server_url: tcp://127.0.0.1:5555
+
+h5_path: /media/jushen/neil-liu/dataNmodels/h5_data/dvt217_stack_cube_2026_0317/success_episodes/0317_133435/data/trajectory.hdf5
+
+# 和 checkpoint 的 config.json 里 input_features 下 observation.images.<短名> 一致
+# inspire 默认 camera_head；brainco 默认 camera
+obs_camera_key: camera_head
+
+# 初次跑只 200 步够看收敛/异常；0 = 跑完整条
+replay_debug_max_steps: 200
+
+action_rate: 20.0
+
+# 若自动检测找不到 HDF5 里的图像/状态路径再放开下面两行：
+# replay_images_h5_key: observations/rgb_images/camera_camera
+# replay_state_h5_key: puppet/joint_position
+
+# 首次跑建议打开，校验 client 编 multipart vs server 解包后的关节向量是否一致
+joints:
+  enabled: true
+  directory: /tmp/debug_joint_dvt217
+  use_timestamp_subdir: false
+
+# 客户端在 multipart 编码后、ZMQ 发送前 存 PNG —— 就是"将要发出去的 RGB"
+# interval=20 + max_frames=10 配合 replay_debug_max_steps=200，均匀采 10 帧
+# 与 server 的 --save_images_dir/--save_images_flat 指向同一父目录时，写入
+# <directory>/client/ 和 <directory>/server/ 两条兄弟子目录（见下方 server 命令）
+image_save:
+  enabled: true
+  directory: /tmp/debug_rgb_dvt217/client
+  interval: 20
+  max_frames: 10
+  use_timestamp_subdir: false
+
+# arm_command 在 replay_debug 下用不到（不下发 ROS），但 config_loader 仍会校验，
+# 留默认即可
+arm_command:
+  mode: cmd_pos

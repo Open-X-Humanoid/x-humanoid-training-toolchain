@@ -25,9 +25,10 @@ src/xhum/deploy_decouple/scripts/*
 !src/xhum/deploy_decouple/scripts/stat_hdf5_firstframe_mean.py
 !src/xhum/deploy_decouple/scripts/eval_policy_from_hdf5.py
 
-# Decoupled deploy: per-user robot YAML (keep only the example)
+# Decoupled deploy: per-user robot YAML (keep example + tracked debug config)
 src/xhum/deploy_decouple/robot/config/*.yaml
 !src/xhum/deploy_decouple/robot/config/config_zmq.example.yaml
+!src/xhum/deploy_decouple/robot/config/replay_debug.yaml
 
 # Logging
 logs
