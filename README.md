@@ -17,7 +17,7 @@ x-humanoid-training-toolchain/
 ├── src/xhum/                          # Custom toolchain (decoupled from lerobot)
 │   ├── convert/
 │   │   ├── hdf5_to_lerobot.py         # HDF5 -> LeRobot V3 dataset converter
-│   │   ├── convert.sh                 # Conversion example script
+│   │   ├── convert.example.sh         # Copy to convert.sh and edit
 │   │   └── configs/                   # Dataset conversion configs
 │   ├── train/
 │   │   └── configs/                   # Training configs (for lerobot-train)
@@ -205,21 +205,27 @@ Note: multiple episodes are stored in the same chunk file and distinguished by t
 
 ## Training
 
-Train an ACT policy on a converted dataset using LeRobot's built-in CLI:
+### Single dataset — `lerobot-train`
+
+Copy the example wrapper, edit the paths, and run it:
 
 ```bash
-lerobot-train --config_path=src/xhum/train/configs/act_tienkung.json
+cp src/xhum/train/run_train_native.example.sh src/xhum/train/run_train_native.sh
+# edit dataset.repo_id, output_dir, HF_LEROBOT_HOME, etc.
+bash src/xhum/train/run_train_native.sh
 ```
 
-The training config (`act_tienkung.json`) defines dataset, policy architecture, optimizer, and logging settings. Key fields to update before running:
+`run_train_native.example.sh` calls `lerobot-train` directly with CLI flags (`--dataset.repo_id`, `--policy.type=act`, `--output_dir`, `--steps`, ...). Extra flags pass through (`bash run_train_native.sh --resume=true`).
 
-| Field | Description |
-|---|---|
-| `dataset.repo_id` | Name of the converted dataset |
-| `dataset.root` | Path to the dataset directory (or set `HF_LEROBOT_HOME` env var) |
-| `output_dir` | Directory for checkpoints and logs |
-| `policy.input_features` | Must match the features in your conversion config |
-| `policy.output_features` | Action feature shape |
+### Multi-dataset — `xhum.train.train_multi`
+
+For joint training over multiple LeRobot V3 datasets (with feature intersection + stats aggregation):
+
+```bash
+./scripts/xhum-run xhum.train.train_multi --config src/xhum/train/configs/multi_train_example.json
+```
+
+See `src/xhum/train/README.md` for the config schema (action/state dims must match across datasets).
 
 Checkpoints are saved in HuggingFace `from_pretrained`-compatible format, ready for deployment with `xhum.deploy.policy_agent.PolicyAgent` (or the decoupled copy under `src/xhum/deploy_decouple/policy/`).
 

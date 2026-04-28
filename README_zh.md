@@ -49,8 +49,12 @@ x-humanoid-training-toolchain/
 ├── src/xhum/                       # 自定义工具链（与 lerobot 完全解耦）
 │   ├── convert/
 │   │   ├── hdf5_to_lerobot.py      # HDF5 → LeRobot V3 数据集转换
-│   │   ├── convert.sh              # 转换示例脚本
-│   │   └── configs/                # 数据集 schema 与训练配置
+│   │   ├── convert.example.sh      # 复制为 convert.sh 后编辑
+│   │   └── configs/                # 数据集转换 config（HDF5 key → feature 映射）
+│   ├── train/
+│   │   ├── run_train_native.example.sh  # 单数据集 lerobot-train 包装脚本
+│   │   ├── train_multi.py          # 多数据集训练入口
+│   │   └── configs/                # 多数据集训练配置示例
 │   ├── deploy/                      # 统一 ROS2 实机部署（./scripts/xhum-run xhum.deploy.ros2_deploy）
 │   │   ├── policy_agent.py
 │   │   ├── ros2_deploy.py
@@ -160,30 +164,43 @@ pip install -e ./lerobot
   --repo_id my_dataset \
   --src_root /path/to/hdf5/data \
   --tgt_path /path/to/output \
-  --task_name pick_cup \
-  --fps 30 \
-  --robot_type tienkung
+  --task_name pick_cup
 ```
 
 
 | 参数 | 说明 |
 |---|---|
-| `--config` | 数据集特征 schema JSON 文件路径 |
-| `--repo_id` | 数据集标识符 |
+| `--config` | 数据集 config JSON 路径（含 `dataset.fps`、`dataset.robot_type` 与 HDF5 → feature 映射） |
+| `--repo_id` | 数据集标识符（输出子目录名） |
 | `--src_root` | 包含 HDF5 episode 文件夹的源目录 |
-| `--tgt_path` | 转换后数据集的输出目录 |
-| `--task_name` | 任务名称（自然语言描述） |
-| `--fps` | 帧率 |
-| `--robot_type` | 机器人类型标识（如 `tienkung`） |
+| `--tgt_path` | 转换后数据集的输出父目录 |
+| `--task_name` | 任务名称（默认 `default_task`） |
+
+> `fps` / `robot_type` 不是 CLI 参数；写在 config JSON 的 `dataset` 段里。详见 [`src/xhum/convert/README.md`](src/xhum/convert/README.md)。
 
 ### 模型训练
 
-数据集转换完成后，使用 LeRobot 内置 CLI 进行训练：
+#### 单数据集（`lerobot-train`）
+
+复制示例脚本，按需修改后运行：
 
 ```bash
-export HF_LEROBOT_HOME=/path/to/datasets
-lerobot-train --config_path=src/xhum/convert/configs/act_tienkung.json
+cp src/xhum/train/run_train_native.example.sh src/xhum/train/run_train_native.sh
+# 编辑 dataset.repo_id、output_dir、HF_LEROBOT_HOME 等
+bash src/xhum/train/run_train_native.sh
 ```
+
+脚本通过 CLI flags 直接调 `lerobot-train`（`--dataset.repo_id`、`--policy.type=act`、`--output_dir`、`--steps` 等），追加参数会原样传过去：`bash run_train_native.sh --resume=true`。
+
+#### 多数据集（`xhum.train.train_multi`）
+
+合并多个 LeRobot V3 数据集联合训练（自动按公共特征求交集 + 跨集 stats 聚合）：
+
+```bash
+./scripts/xhum-run xhum.train.train_multi --config src/xhum/train/configs/multi_train_example.json
+```
+
+config schema 与限制（action/state 维度必须一致）见 [`src/xhum/train/README.md`](src/xhum/train/README.md)。
 
 ### 可视化
 
