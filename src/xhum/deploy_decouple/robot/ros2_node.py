@@ -49,9 +49,19 @@ from cv_bridge import CvBridge
 from message_filters import ApproximateTimeSynchronizer, Subscriber
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import Image, JointState
 from std_msgs.msg import Header
 
+# ---------------------------------------------------------------------------
+# Robot-model–dependent message imports.
+#
+# tienkung2 uses ``bodyctrl_msgs`` (legacy) + ``ros2_stark_interfaces`` for the
+# brainco hand. tienkung3 switches to ``ros2_bridge_msgs`` for the arm and
+# ``brainco_hand_msgs`` for the hand. We try every package optimistically so a
+# single Python env can run both robots; the per-import availability flags are
+# consulted at runtime once ``robot_model`` is read from YAML.
+# ---------------------------------------------------------------------------
 try:
     from bodyctrl_msgs.msg import CmdSetMotorPosition, MotorStatusMsg, SetMotorPosition
 
@@ -65,25 +75,64 @@ except ImportError:
     print("Warning: bodyctrl_msgs not available, using String as fallback")
 
 try:
-    from ros2_stark_interfaces.msg import MotorStatus, SetMotorMulti
+    from ros2_bridge_msgs.msg import ArmCtrl, MotorCtrl, RobotState
 
-    BRAINCO_AVAILABLE = True
+    BRIDGE_MSGS_AVAILABLE = True
 except ImportError:
-    BRAINCO_AVAILABLE = False
+    ArmCtrl = MotorCtrl = RobotState = None  # type: ignore[assignment]
+    BRIDGE_MSGS_AVAILABLE = False
+
+try:
+    from ros2_stark_interfaces.msg import MotorStatus as StarkMotorStatus
+    from ros2_stark_interfaces.msg import SetMotorMulti as StarkSetMotorMulti
+
+    STARK_HAND_AVAILABLE = True
+except ImportError:
+    StarkMotorStatus = StarkSetMotorMulti = None  # type: ignore[assignment]
+    STARK_HAND_AVAILABLE = False
+
+try:
+    from brainco_hand_msgs.msg import MotorStatus as BrainCoMotorStatus
+    from brainco_hand_msgs.msg import SetMotorMulti as BrainCoSetMotorMulti
+
+    BRAINCO_HAND_MSGS_AVAILABLE = True
+except ImportError:
+    BrainCoMotorStatus = BrainCoSetMotorMulti = None  # type: ignore[assignment]
+    BRAINCO_HAND_MSGS_AVAILABLE = False
+
+# Legacy flag preserved for older callers; true if either brainco message
+# package can be imported (tienkung2 needs stark, tienkung3 needs brainco_hand_msgs).
+BRAINCO_AVAILABLE = STARK_HAND_AVAILABLE or BRAINCO_HAND_MSGS_AVAILABLE
 
 from config_loader import (
     ARM_CMD_MODES,
     HAND_TYPES,
+    ROBOT_MODELS,
     make_policy_client,
     load_config,
 )
 from replay_io.hdf5_actions import load_action_trajectory
 from replay_io.hdf5_replay_obs import load_replay_obs_trajectory
+from robot_state_parser import parse_arm_positions
 
-# Arm command ROS topics (not configurable; remap at launch if needed)
-_ARM_STATUS_TOPIC = "/arm/status"
-_ARM_CMD_POS_TOPIC = "/arm/cmd_pos"
+# Arm topics per robot model (kept here, not in YAML, to mirror the original
+# "fixed-topic" design — remap at launch if you really need to override).
+_ARM_TOPICS = {
+    "tienkung2": {
+        "status": "/arm/status",
+        "cmd_pos": "/arm/cmd_pos",
+    },
+    "tienkung3": {
+        "status": "/robot_state",
+        "cmd_pos": "/arm/cmd",
+    },
+}
 _ARM_FLEX_FREQ_TOPIC = "/joint_states_flex_freq"
+
+# tienkung3 motor id layout / per-joint speed & current for ArmCtrl messages.
+_TK3_ARM_MOTOR_IDS = [11, 12, 13, 14, 15, 16, 17, 21, 22, 23, 24, 25, 26, 27]
+_TK3_ARM_SPD = [1.0] * 14
+_TK3_ARM_CUR = [10.0] * 14
 
 # Subset handled by PolicyAgentNode (replay_debug exits before rclpy).
 _ROS_RUN_MODES = frozenset({"model", "replay", "replay_actions"})
@@ -112,9 +161,18 @@ class PolicyAgentNode(Node):
             raise ValueError("config must contain key 'arm_command' (mapping)")
         if "mode" not in self.config["arm_command"]:
             raise ValueError("arm_command must contain key 'mode'")
+        if "robot_model" not in self.config:
+            raise ValueError("config must contain key 'robot_model'")
 
         self.mode = self.config["mode"]
         self.hand_type = self.config["hand_type"]
+        self.robot_model = self.config["robot_model"]
+        if self.robot_model not in ROBOT_MODELS:
+            raise ValueError(
+                f"config.robot_model must be one of {sorted(ROBOT_MODELS)}, "
+                f"got {self.robot_model!r}"
+            )
+        self.get_logger().info(f"Robot model: {self.robot_model}")
 
         if self.mode == "model":
             url = self.config["policy_server_url"]
@@ -159,7 +217,20 @@ class PolicyAgentNode(Node):
                 f"config.hand_type must be one of {sorted(HAND_TYPES)}, got {self.hand_type!r}"
             )
 
-        self.joint_state_sub = self.create_subscription(MotorStatusMsg, _ARM_STATUS_TOPIC, self._arm_callback, 10)
+        arm_status_topic = _ARM_TOPICS[self.robot_model]["status"]
+        if self.robot_model == "tienkung2":
+            self.joint_state_sub = self.create_subscription(
+                MotorStatusMsg, arm_status_topic, self._arm_callback_tk2, 10
+            )
+        else:  # tienkung3
+            if not BRIDGE_MSGS_AVAILABLE:
+                raise RuntimeError(
+                    "robot_model=tienkung3 requires ros2_bridge_msgs (RobotState/ArmCtrl)."
+                )
+            self.joint_state_sub = self.create_subscription(
+                RobotState, arm_status_topic, self._arm_callback_tk3, 10
+            )
+        self.get_logger().info(f"Arm status: subscribe {arm_status_topic}")
         self.left_jpos = None
         self.right_jpos = None
 
@@ -173,8 +244,19 @@ class PolicyAgentNode(Node):
         if self._use_camera:
             self.bridge = CvBridge()
             camera_name = self.config["camera_name"]
-            self.rgb_sub = Subscriber(self, Image, f"/{camera_name}/color/image_raw")
-            self.depth_sub = Subscriber(self, Image, f"/{camera_name}/depth/image_raw")
+            # Camera drivers usually publish BEST_EFFORT; default RELIABLE would not connect.
+            self.rgb_sub = Subscriber(
+                self,
+                Image,
+                f"/{camera_name}/color/image_raw",
+                qos_profile=qos_profile_sensor_data,
+            )
+            self.depth_sub = Subscriber(
+                self,
+                Image,
+                f"/{camera_name}/depth/image_raw",
+                qos_profile=qos_profile_sensor_data,
+            )
             self.ats = ApproximateTimeSynchronizer([self.rgb_sub, self.depth_sub], queue_size=10, slop=0.1)
             self.ats.registerCallback(self._image_callback)
             self.get_logger().info(f"Camera sync: /{camera_name}/color|depth/image_raw (model mode)")
@@ -198,14 +280,28 @@ class PolicyAgentNode(Node):
             )
         self.dual_arm_controller = None
         self.arm_flex_freq_publisher = None
+        arm_cmd_topic = _ARM_TOPICS[self.robot_model]["cmd_pos"]
         if self._arm_cmd_mode == "cmd_pos":
-            if not BODYCTRL_AVAILABLE:
-                raise RuntimeError(
-                    "arm_command.mode=cmd_pos requires bodyctrl_msgs "
-                    "(CmdSetMotorPosition / SetMotorPosition on /arm/cmd_pos)."
+            if self.robot_model == "tienkung2":
+                if not BODYCTRL_AVAILABLE:
+                    raise RuntimeError(
+                        "robot_model=tienkung2 + arm_command.mode=cmd_pos requires "
+                        "bodyctrl_msgs (CmdSetMotorPosition / SetMotorPosition on /arm/cmd_pos)."
+                    )
+                self.dual_arm_controller = self.create_publisher(
+                    CmdSetMotorPosition, arm_cmd_topic, 10
                 )
-            self.dual_arm_controller = self.create_publisher(CmdSetMotorPosition, _ARM_CMD_POS_TOPIC, 10)
-            self.get_logger().info(f"Arm command: CmdSetMotorPosition -> {_ARM_CMD_POS_TOPIC}")
+                self.get_logger().info(
+                    f"Arm command: CmdSetMotorPosition -> {arm_cmd_topic}"
+                )
+            else:  # tienkung3
+                if not BRIDGE_MSGS_AVAILABLE:
+                    raise RuntimeError(
+                        "robot_model=tienkung3 + arm_command.mode=cmd_pos requires "
+                        "ros2_bridge_msgs (ArmCtrl/MotorCtrl on /arm/cmd)."
+                    )
+                self.dual_arm_controller = self.create_publisher(ArmCtrl, arm_cmd_topic, 10)
+                self.get_logger().info(f"Arm command: ArmCtrl -> {arm_cmd_topic}")
         elif self._arm_cmd_mode == "flex_freq":
             self.arm_flex_freq_publisher = self.create_publisher(JointState, _ARM_FLEX_FREQ_TOPIC, 10)
             self.get_logger().info(f"Arm command: JointState (flex_freq) -> {_ARM_FLEX_FREQ_TOPIC}")
@@ -215,14 +311,35 @@ class PolicyAgentNode(Node):
         self.get_logger().info(f"PolicyAgentNode (ZMQ) init complete  hand_type={self.hand_type}")
 
     def _setup_brainco_hands(self):
-        if not BRAINCO_AVAILABLE:
-            raise ImportError("ros2_stark_interfaces is required for hand_type='brainco'")
+        # tienkung2 uses ros2_stark_interfaces; tienkung3 uses brainco_hand_msgs.
+        # The wire format / topic names are the same — only the msg package differs.
+        if self.robot_model == "tienkung2":
+            if not STARK_HAND_AVAILABLE:
+                raise ImportError(
+                    "robot_model=tienkung2 + hand_type=brainco requires ros2_stark_interfaces"
+                )
+            motor_status_cls = StarkMotorStatus
+            set_motor_multi_cls = StarkSetMotorMulti
+        else:  # tienkung3
+            if not BRAINCO_HAND_MSGS_AVAILABLE:
+                raise ImportError(
+                    "robot_model=tienkung3 + hand_type=brainco requires brainco_hand_msgs"
+                )
+            motor_status_cls = BrainCoMotorStatus
+            set_motor_multi_cls = BrainCoSetMotorMulti
 
-        self.left_hand_publisher = self.create_publisher(SetMotorMulti, "/left_hand/set_motor_multi", 10)
-        self.right_hand_publisher = self.create_publisher(SetMotorMulti, "/right_hand/set_motor_multi", 10)
+        # Remember the publishing class for ``_control_hand_brainco``.
+        self._brainco_set_motor_multi_cls = set_motor_multi_cls
 
-        self.create_subscription(MotorStatus, "/left_hand/motor_status", self._brainco_left_cb, 10)
-        self.create_subscription(MotorStatus, "/right_hand/motor_status", self._brainco_right_cb, 10)
+        self.left_hand_publisher = self.create_publisher(
+            set_motor_multi_cls, "/left_hand/set_motor_multi", 10
+        )
+        self.right_hand_publisher = self.create_publisher(
+            set_motor_multi_cls, "/right_hand/set_motor_multi", 10
+        )
+
+        self.create_subscription(motor_status_cls, "/left_hand/motor_status", self._brainco_left_cb, 10)
+        self.create_subscription(motor_status_cls, "/right_hand/motor_status", self._brainco_right_cb, 10)
 
     def _setup_inspire_hands(self):
         self.left_hand_publisher = self.create_publisher(JointState, "/inspire_hand/ctrl/left_hand", 10)
@@ -245,10 +362,18 @@ class PolicyAgentNode(Node):
         if len(msg.position) > 0:
             self.right_hand_pos = np.array(msg.position)
 
-    def _arm_callback(self, msg):
+    def _arm_callback_tk2(self, msg):
+        """tienkung2: ``bodyctrl_msgs/MotorStatusMsg`` — 14 motors in order."""
         tmp = [val.pos for val in msg.status]
         self.left_jpos = tmp[:7]
         self.right_jpos = tmp[7:]
+
+    def _arm_callback_tk3(self, msg):
+        """tienkung3: ``ros2_bridge_msgs/RobotState`` — pick arm motors by id."""
+        try:
+            self.left_jpos, self.right_jpos = parse_arm_positions(msg)
+        except Exception as e:
+            self.get_logger().warning(f"RobotState arm parse failed: {e}")
 
     def _image_callback(self, rgb_msg, depth_msg):
         if not self._use_camera or self.bridge is None:
@@ -290,8 +415,8 @@ class PolicyAgentNode(Node):
             f"hand_type must be one of {sorted(HAND_TYPES)}, got {self.hand_type!r}"
         )
 
-    def _construct_dual_arm_ctrl_msg(self, target_joint: list[float]) -> CmdSetMotorPosition:
-        """bodyctrl: one CmdSetMotorPosition wrapping 14× SetMotorPosition (motor id + pos/spd/cur)."""
+    def _construct_dual_arm_ctrl_msg_tk2(self, target_joint: list[float]):
+        """tienkung2 / bodyctrl: ``CmdSetMotorPosition`` wrapping 14× ``SetMotorPosition``."""
         msg = CmdSetMotorPosition()
         msg.header = Header()
         msg.header.stamp = self.get_clock().now().to_msg()
@@ -306,6 +431,41 @@ class PolicyAgentNode(Node):
             cmd.spd = arm_spd
             cmd.cur = arm_cur
             msg.cmds.append(cmd)
+        return msg
+
+    def _construct_dual_arm_ctrl_msg_tk3(
+        self,
+        target_joint: list[float],
+        mode: int = 0,
+        label: int = 0,
+    ):
+        """tienkung3 / ros2_bridge_msgs: ``ArmCtrl`` carrying 14× ``MotorCtrl``.
+
+        Position-only mode (``kp/kd/tor`` zero); per-motor ``spd``/``cur`` from
+        ``_TK3_ARM_SPD`` / ``_TK3_ARM_CUR`` constants. ``arm_spd``/``arm_cur``
+        from YAML are read for parity with tienkung2 but currently not pushed
+        into per-motor fields (the working tienkung3 controller uses constants).
+        """
+        msg = ArmCtrl()
+        msg.header = Header()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.mode = mode
+        msg.label = label
+        msg.reserved = 0
+
+        ctrl_list = []
+        for i in range(len(_TK3_ARM_MOTOR_IDS)):
+            ctrl = MotorCtrl()
+            ctrl.name = int(_TK3_ARM_MOTOR_IDS[i])
+            ctrl.kp = 0.0
+            ctrl.kd = 0.0
+            ctrl.pos = float(target_joint[i])
+            ctrl.spd = float(_TK3_ARM_SPD[i])
+            ctrl.tor = 0.0
+            ctrl.cur = float(_TK3_ARM_CUR[i])
+            ctrl.joint_ids = ""
+            ctrl_list.append(ctrl)
+        msg.ctrl = ctrl_list
         return msg
 
     def _construct_arm_flex_freq_msg(self, target_joint: list[float]) -> JointState:
@@ -324,7 +484,10 @@ class PolicyAgentNode(Node):
         if len(tj) != 14:
             raise ValueError(f"arm target must have 14 elements, got {len(tj)}")
         if self._arm_cmd_mode == "cmd_pos":
-            out = self._construct_dual_arm_ctrl_msg(tj)
+            if self.robot_model == "tienkung2":
+                out = self._construct_dual_arm_ctrl_msg_tk2(tj)
+            else:
+                out = self._construct_dual_arm_ctrl_msg_tk3(tj, mode=0, label=0)
             self.dual_arm_controller.publish(out)
         elif self._arm_cmd_mode == "flex_freq":
             out = self._construct_arm_flex_freq_msg(tj)
@@ -360,7 +523,7 @@ class PolicyAgentNode(Node):
             )
 
     def _control_hand_brainco(self, side: str, position):
-        msg = SetMotorMulti()
+        msg = self._brainco_set_motor_multi_cls()
         if isinstance(position, (list, np.ndarray)):
             msg.positions = np.asarray(position, dtype=np.uint16)
         else:
@@ -397,11 +560,15 @@ class PolicyAgentNode(Node):
             raise ValueError(f"side must be 'left' or 'right', got {side!r}")
 
     def publish_action(self, action):
-        if self.hand_type == "brainco":
+        # Action layout depends on (hand_type, robot_model).
+        # - inspire (any model)     : larm7 + lhand6 + rarm7 + rhand6  (interleaved)
+        # - brainco + tienkung2     : arm14 (l7+r7 contiguous) + lhand6 + rhand6
+        # - brainco + tienkung3     : same interleaved layout as inspire
+        if self.hand_type == "brainco" and self.robot_model == "tienkung2":
             target_joint = action[:14]
             left_hand = action[14:20]
             right_hand = action[20:]
-        elif self.hand_type == "inspire":
+        elif self.hand_type in ("inspire", "brainco"):
             target_joint = np.concatenate([action[:7], action[13:20]])
             left_hand = action[7:13]
             right_hand = action[20:]

@@ -18,6 +18,13 @@ mode: model
 # inspire | brainco — 与硬件一致；会影响手部话题、obs 里相机短名、home 位等
 hand_type: inspire
 
+# 机型（决定通信细节，详见 ros2_node.py 顶部分发表）：
+#   tienkung2 — bodyctrl_msgs(/arm/status, /arm/cmd_pos) + ros2_stark_interfaces 手部
+#               brainco 动作布局 = arm14(l7+r7) + lhand6 + rhand6
+#   tienkung3 — ros2_bridge_msgs(/robot_state, /arm/cmd) + brainco_hand_msgs 手部
+#               brainco 动作布局 = larm7 + lhand6 + rarm7 + rhand6（与 inspire 一致）
+robot_model: tienkung2
+
 # -----------------------------------------------------------------------------
 # 本机部署（ROS 与 policy_server 同一台电脑）— 推荐写法
 # -----------------------------------------------------------------------------
@@ -46,6 +53,12 @@ h5_path: /path/to/trajectory.hdf5
 # 稠密 4D：observations/images/camera_head；JPEG 按帧 object：observations/rgb_images/camera_camera
 # replay_images_h5_key: observations/rgb_images/camera_camera
 # replay_state_h5_key: puppet/joint_position
+# 或多个数据集按列拼接（与 convert 里 hdf5_keys 一致，例如 evt 26 维 state）：
+# replay_state_h5_key:
+#   - puppet/arm_left_position_align/data
+#   - puppet/end_effector_left_position_align/data
+#   - puppet/arm_right_position_align/data
+#   - puppet/end_effector_right_position_align/data
 
 # -----------------------------------------------------------------------------
 # 相机与节拍（与 ros2_deploy 一致）

@@ -20,6 +20,10 @@ ARM_CMD_MODES = frozenset({"cmd_pos", "flex_freq"})
 HAND_TYPES = frozenset({"brainco", "inspire"})
 RUN_MODES = frozenset({"model", "replay", "replay_actions", "replay_debug"})
 
+# Robot model controls ROS message types / topics / brainco hand msg package /
+# brainco action-layout. See ``ros2_node.py`` for the dispatch matrix.
+ROBOT_MODELS = frozenset({"tienkung2", "tienkung3"})
+
 _BRAINCO_HOME = [
     -0.05916397, 0.11694484, 0.00816471, -1.6296118, -0.18107964, -0.1322771, -0.08812793,
     -0.00609963, 0.05809595, -0.0326848, -1.6615903, -0.15057923, 0.03735191, 0.00886455,
@@ -62,6 +66,13 @@ HAND_TYPE_DEFAULTS = {
 DEFAULT_CONFIG = {
     "mode": "model",
     "hand_type": "inspire",
+    # tienkung2 (legacy): /arm/status + /arm/cmd_pos via bodyctrl_msgs;
+    #                     brainco hand via ros2_stark_interfaces;
+    #                     brainco action layout = arm14 + lhand6 + rhand6.
+    # tienkung3        : /robot_state + /arm/cmd via ros2_bridge_msgs;
+    #                    brainco hand via brainco_hand_msgs;
+    #                    brainco action layout = larm7 + lhand6 + rarm7 + rhand6.
+    "robot_model": "tienkung2",
     "policy_server_url": "tcp://127.0.0.1:5555",
     # REQ socket RCVTIMEO/SNDTIMEO (ms). First ACT inference can exceed 10s; 0 = wait forever.
     "policy_zmq_timeout_ms": 120_000,
@@ -200,6 +211,12 @@ def load_config(config_path: str | None, logger) -> dict:
     m = merged.get("mode")
     if m not in RUN_MODES:
         raise ValueError(f"Unknown mode {m!r}; expected one of {sorted(RUN_MODES)}")
+
+    rm = merged.get("robot_model")
+    if rm not in ROBOT_MODELS:
+        raise ValueError(
+            f"Unknown robot_model {rm!r}; expected one of {sorted(ROBOT_MODELS)}"
+        )
 
     return merged
 

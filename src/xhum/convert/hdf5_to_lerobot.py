@@ -89,7 +89,9 @@ def _read_numeric(h5file: h5py.File, mapping: dict) -> np.ndarray:
 
 
 def _decode_image_buffer(buf: np.ndarray, resize: tuple[int, int] | None) -> np.ndarray:
+    # cv2.imdecode 总是返回 BGR；LeRobot 视频编码端期望 RGB，否则颜色红蓝互换。
     img = cv2.imdecode(buf, cv2.IMREAD_COLOR)
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     if resize is not None:
         img = cv2.resize(img, resize)
     return img

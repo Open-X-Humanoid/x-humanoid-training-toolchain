@@ -9,7 +9,7 @@ Public API:
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from io import BytesIO
 from typing import Any, Tuple
 
@@ -36,14 +36,29 @@ def _to_uint8_hwc(frame: np.ndarray) -> np.ndarray:
     raise ValueError(f"cannot infer HWC layout from shape {x.shape}")
 
 
+def _jpeg_bytes_from_cell(cell: Any) -> bytes:
+    """Normalize one HDF5 object cell to raw JPEG bytes."""
+    if isinstance(cell, np.ndarray) and cell.dtype == np.uint8 and cell.ndim == 1:
+        return cell.tobytes()
+    if isinstance(cell, (bytes, bytearray)):
+        return bytes(cell)
+    return np.asarray(cell, dtype=np.uint8).tobytes()
+
+
+def _cell_looks_like_jpeg_bytes(cell: Any) -> bool:
+    """Heuristic: (T,) object stacks of per-frame JPEG (evt / RoboMIND style)."""
+    try:
+        buf = _jpeg_bytes_from_cell(cell)
+    except Exception:
+        return False
+    # JPEG SOI marker; also reject tiny blobs that cannot be images.
+    return len(buf) > 100 and buf[:3] == b"\xff\xd8\xff"
+
+
 def _decode_jpeg_cell(cell: Any) -> np.ndarray:
     """Decode one HDF5 object cell (uint8 1d JPEG bytes) to RGB uint8 (H, W, 3)."""
-    if isinstance(cell, np.ndarray) and cell.dtype == np.uint8 and cell.ndim == 1:
-        buf = cell.tobytes()
-    elif isinstance(cell, (bytes, bytearray)):
-        buf = bytes(cell)
-    else:
-        buf = np.asarray(cell, dtype=np.uint8).tobytes()
+    buf = _jpeg_bytes_from_cell(cell)
+    decode_errors: list[str] = []
 
     try:
         import cv2
@@ -53,25 +68,43 @@ def _decode_jpeg_cell(cell: Any) -> np.ndarray:
         if bgr is None:
             raise ValueError("cv2.imdecode returned None")
         return cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-    except Exception:
-        pass
-    from PIL import Image
+    except Exception as exc:
+        decode_errors.append(f"cv2: {exc}")
 
-    im = Image.open(BytesIO(buf)).convert("RGB")
-    return np.asarray(im, dtype=np.uint8)
+    try:
+        from PIL import Image
+
+        im = Image.open(BytesIO(buf)).convert("RGB")
+        return np.asarray(im, dtype=np.uint8)
+    except Exception as exc:
+        decode_errors.append(f"PIL: {exc}")
+
+    raise RuntimeError(
+        "cannot decode JPEG frame from HDF5 (install opencv-python or Pillow). "
+        + "; ".join(decode_errors)
+    )
+
+
+def _first_stack_cell(img_stack: h5py.Dataset | np.ndarray) -> Any:
+    if isinstance(img_stack, h5py.Dataset):
+        return img_stack[0]
+    return img_stack[0]
+
+
+def _looks_like_jpeg_object_stack(img_stack: h5py.Dataset | np.ndarray) -> bool:
+    """Detect per-frame JPEG rows without requiring a successful decode probe."""
+    if isinstance(img_stack, h5py.Dataset):
+        if img_stack.dtype != object or img_stack.ndim != 1 or img_stack.shape[0] < 1:
+            return False
+    else:
+        arr = np.asarray(img_stack)
+        if arr.dtype != object or arr.ndim != 1 or arr.shape[0] < 1:
+            return False
+    return _cell_looks_like_jpeg_bytes(_first_stack_cell(img_stack))
 
 
 def _dataset_is_jpeg_object_stack(ds: h5py.Dataset) -> bool:
-    if not isinstance(ds, h5py.Dataset) or ds.dtype != object or ds.ndim != 1 or ds.shape[0] < 1:
-        return False
-    try:
-        x0 = ds[0]
-        if isinstance(x0, np.ndarray) and x0.dtype == np.uint8 and x0.ndim == 1 and x0.size > 100:
-            _decode_jpeg_cell(x0)
-            return True
-    except Exception:
-        return False
-    return False
+    return isinstance(ds, h5py.Dataset) and _looks_like_jpeg_object_stack(ds)
 
 
 def _discover_rgb_video_dataset(f: h5py.File) -> h5py.Dataset | None:
@@ -170,6 +203,9 @@ def _resolve_image_dataset(
         return f[images_h5_key]
 
     candidates = [
+        f"camera_observations/color_images/camera_camera",
+        f"camera_observations/color_images/{obs_camera_key}",
+        f"camera_observations/color_images/camera_{obs_camera_key}",
         f"observations/images/{obs_camera_key}",
         f"observation/images/{obs_camera_key}",
         "observations/images/camera_head",
@@ -209,6 +245,10 @@ def _resolve_image_dataset(
     if grp_rgb is not None and isinstance(grp_rgb, h5py.Group):
         return _rgb_images_group_pick(grp_rgb, obs_camera_key)
 
+    grp_cam = f.get("camera_observations/color_images")
+    if grp_cam is not None and isinstance(grp_cam, h5py.Group):
+        return _rgb_images_group_pick(grp_cam, obs_camera_key)
+
     ds = _discover_rgb_video_dataset(f)
     if ds is not None:
         return ds
@@ -222,11 +262,62 @@ def _resolve_image_dataset(
     )
 
 
-def _resolve_state_array(f: h5py.File, state_h5_key: str | None) -> np.ndarray:
-    if state_h5_key:
-        if state_h5_key not in f:
-            raise KeyError(f"replay_state_h5_key not found: {state_h5_key!r}")
-        return np.asarray(f[state_h5_key])
+def _normalize_h5_keys(
+    keys: str | Sequence[str] | None,
+    *,
+    config_name: str,
+) -> list[str] | None:
+    """Accept a single HDF5 path or a list (evt-style multi-dataset concat)."""
+    if keys is None:
+        return None
+    if isinstance(keys, str):
+        k = keys.strip()
+        return [k] if k else None
+    if isinstance(keys, (list, tuple)):
+        out = [str(k).strip() for k in keys if str(k).strip()]
+        if not out:
+            return None
+        return out
+    raise TypeError(
+        f"{config_name} must be a string or list of strings, got {type(keys).__name__}"
+    )
+
+
+def _load_timeseries_2d(f: h5py.File, path: str) -> np.ndarray:
+    """Load one HDF5 dataset as ``(T, D)`` float array."""
+    if path not in f:
+        raise KeyError(f"dataset not found: {path!r}")
+    arr = np.asarray(f[path], dtype=np.float32)
+    if arr.ndim == 1:
+        return arr.reshape(-1, 1)
+    if arr.ndim != 2:
+        raise ValueError(f"dataset {path!r} must be 1d or 2d (T, D), got {arr.shape}")
+    return arr
+
+
+def _concat_timeseries(parts: list[np.ndarray], *, config_name: str) -> np.ndarray:
+    """Concatenate ``(T, D_i)`` arrays along feature axis → ``(T, sum(D_i))``."""
+    if not parts:
+        raise ValueError(f"{config_name}: no datasets to concatenate")
+    lengths = {p.shape[0] for p in parts}
+    if len(lengths) != 1:
+        raise ValueError(
+            f"{config_name}: timestep counts differ across keys "
+            f"({[p.shape for p in parts]}); cannot concatenate"
+        )
+    return np.concatenate(parts, axis=1)
+
+
+def _resolve_state_array(
+    f: h5py.File,
+    state_h5_key: str | Sequence[str] | None,
+) -> np.ndarray:
+    keys = _normalize_h5_keys(state_h5_key, config_name="replay_state_h5_key")
+    if keys:
+        return _concat_timeseries(
+            [_load_timeseries_2d(f, k) for k in keys],
+            config_name="replay_state_h5_key",
+        )
 
     if "puppet/joint_position" in f:
         return np.asarray(f["puppet/joint_position"])
@@ -259,15 +350,30 @@ def _frame_decoder(
     (``(T,)`` object) and dense 4D (``(T,H,W,3)`` / ``(T,3,H,W)``) — behind a
     single closure so callers can drop their branching.
     """
-    if isinstance(img_ds, h5py.Dataset) and _dataset_is_jpeg_object_stack(img_ds):
-        return (
-            img_ds.shape[0],
-            lambda i: _to_uint8_hwc(_decode_jpeg_cell(img_ds[i])),
-            "JPEG stack",
-        )
+    if _looks_like_jpeg_object_stack(img_ds):
+        if isinstance(img_ds, h5py.Dataset):
+            t_img = img_ds.shape[0]
+            decode = lambda i, _ds=img_ds: _to_uint8_hwc(_decode_jpeg_cell(_ds[i]))
+        else:
+            stack = np.asarray(img_ds, dtype=object)
+            t_img = stack.shape[0]
+            decode = lambda i, _stack=stack: _to_uint8_hwc(_decode_jpeg_cell(_stack[i]))
+        return t_img, decode, "JPEG stack"
+
     rgb = np.asarray(img_ds)
+    if rgb.ndim == 1 and rgb.dtype == object and rgb.shape[0] >= 1:
+        if _cell_looks_like_jpeg_bytes(rgb[0]):
+            raise ValueError(
+                f"image dataset looks like per-frame JPEG (shape {rgb.shape}) but could not "
+                "use lazy HDF5 reader; keep img_ds as h5py.Dataset or install Pillow/opencv "
+                "for decode"
+            )
     if rgb.ndim != 4:
-        raise ValueError(f"image dataset must be 4d (T,H,W,C) or (T,C,H,W), got {rgb.shape}")
+        raise ValueError(
+            f"image dataset must be 4d (T,H,W,C) or (T,C,H,W), or (T,) JPEG object rows; "
+            f"got {rgb.shape} dtype={rgb.dtype}. "
+            "evt trajectories often use camera_observations/color_images/camera_camera."
+        )
     return rgb.shape[0], lambda i: _to_uint8_hwc(rgb[i]), "dense 4D"
 
 
@@ -275,8 +381,8 @@ def load_replay_obs_trajectory(
     h5_path: str,
     *,
     obs_camera_key: str,
-    images_h5_key: str | None,
-    state_h5_key: str | None,
+    images_h5_key: str | Sequence[str] | None,
+    state_h5_key: str | Sequence[str] | None,
     logger: Any,
 ) -> list[dict[str, Any]]:
     """Return one observation dict per timestep (wire-format for ``PolicyClient``)."""
@@ -307,8 +413,8 @@ def load_aligned_joint_timeseries(
     h5_path: str,
     *,
     obs_camera_key: str,
-    images_h5_key: str | None,
-    state_h5_key: str | None,
+    images_h5_key: str | Sequence[str] | None,
+    state_h5_key: str | Sequence[str] | None,
     logger: Any,
 ) -> np.ndarray:
     """Aligned joint/state array ``(T, D)`` — same ``T`` as ``load_replay_obs_trajectory``.

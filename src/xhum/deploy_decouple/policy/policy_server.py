@@ -43,9 +43,12 @@ import zmq
 # install required, each process injects it at startup.
 _HERE = Path(__file__).resolve().parent
 _WIRE = _HERE.parent / "wire"
-for _p in (_HERE, _WIRE):
+# Toolchain checkout: lerobot git submodule at repo_root/lerobot/src
+_REPO_ROOT = _HERE.parent.parent.parent.parent
+_LEROBOT_SRC = _REPO_ROOT / "lerobot" / "src"
+for _p in (_HERE, _WIRE, _LEROBOT_SRC):
     _s = str(_p)
-    if _s not in sys.path:
+    if _p.is_dir() and _s not in sys.path:
         sys.path.insert(0, _s)
 
 from policy_agent import PolicyAgent
