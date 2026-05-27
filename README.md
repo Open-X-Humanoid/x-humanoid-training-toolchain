@@ -21,11 +21,11 @@ x-humanoid-training-toolchain/
 │   │   └── configs/                   # Dataset conversion configs
 │   ├── train/
 │   │   └── configs/                   # Training configs (for lerobot-train)
-│   ├── deploy/                        # Unified ROS2 deploy (./scripts/xhum-run xhum.deploy.ros2_deploy)
-│   │   ├── policy_agent.py
-│   │   ├── ros2_deploy.py
-│   │   └── config.yaml
-│   └── deploy_decouple/               # Py3.12 policy server + Py3.10 ROS ZMQ bridge (see README inside)
+│   ├── deploy_decouple/               # Py3.12 policy + Py3.10 ROS over ZMQ (primary; see README inside)
+│   └── deploy/                        # (legacy) Single-env ROS2 deploy — kept for reference
+│       ├── policy_agent.py
+│       ├── ros2_deploy.py
+│       └── config.yaml
 ├── scripts/
 │   └── xhum-run                       # Run xhum modules without pip install (sets PYTHONPATH=src)
 ├── pyproject.toml
@@ -84,6 +84,8 @@ Convert HDF5 episode data into LeRobot V3 dataset format **without** installing 
 ```bash
 ./scripts/xhum-run xhum.convert.hdf5_to_lerobot --help
 ```
+
+For a step-by-step walkthrough (inspecting HDF5 keys with `inspect_h5.py`, iterating on the config), see [`src/xhum/convert/README.md`](src/xhum/convert/README.md). The dense reference below covers the config schema and CLI in full.
 
 ### Source data layout
 
@@ -231,13 +233,29 @@ Checkpoints are saved in HuggingFace `from_pretrained`-compatible format, ready 
 
 ## ROS2 deployment
 
-From the repo root, unified ROS2 node (`hand_type` in YAML selects BrainCo vs Inspire):
+The going-forward deployment path is **decoupled deploy** under `src/xhum/deploy_decouple/`. Policy inference runs in a Python 3.12 process (torch + LeRobot); the ROS2 control loop runs in a Python 3.10 process (`rclpy`); the two communicate over ZMQ. This sidesteps the long-standing torch / `rclpy` Python-version conflict, and is where new features (replay modes, debug traces, configurable home poses) land.
+
+Minimal two-process launch on a single machine:
 
 ```bash
-./scripts/xhum-run xhum.deploy.ros2_deploy --config /path/to/src/xhum/deploy/config.yaml
+# Terminal A — policy server (Py 3.12, torch + LeRobot env)
+cd src/xhum/deploy_decouple/policy
+python policy_server.py \
+  --model_path /path/to/checkpoint/pretrained_model \
+  --bind tcp://127.0.0.1:5555
+
+# Terminal B — ROS entry (Py 3.10, ROS2 sourced)
+cd src/xhum/deploy_decouple/robot
+python3 run.py --config ./config/my_robot.yaml
 ```
 
-For Python 3.12 policy + Python 3.10 ROS over ZMQ, see **`src/xhum/deploy_decouple/README.md`**.
+YAML `mode` selects the runtime path: `model` (live policy), `replay` (HDF5 actions streamed via ZMQ), `replay_actions` (open-loop, no policy server), `replay_debug` (no ROS — runs on a laptop).
+
+See **[`src/xhum/deploy_decouple/README.md`](src/xhum/deploy_decouple/README.md)** for the full guide: modes, YAML schema, ZMQ wire protocol, hand-type / camera-key invariants, and debug traces.
+
+### Legacy: monolithic `src/xhum/deploy/`
+
+`src/xhum/deploy/ros2_deploy.py` is the original single-process implementation (one Python env hosting both `rclpy` and `torch`). It is kept for reference but no longer the recommended path — new deployments should use the decoupled flow above.
 
 ## Related Projects
 

@@ -55,11 +55,11 @@ x-humanoid-training-toolchain/
 │   │   ├── run_train_native.example.sh  # 单数据集 lerobot-train 包装脚本
 │   │   ├── train_multi.py          # 多数据集训练入口
 │   │   └── configs/                # 多数据集训练配置示例
-│   ├── deploy/                      # 统一 ROS2 实机部署（./scripts/xhum-run xhum.deploy.ros2_deploy）
-│   │   ├── policy_agent.py
-│   │   ├── ros2_deploy.py
-│   │   └── config.yaml
-│   └── deploy_decouple/             # Py3.12 策略服务 + Py3.10 ROS ZMQ（见该目录 README）
+│   ├── deploy_decouple/             # Py3.12 策略 + Py3.10 ROS（ZMQ 通信，主推；详见该目录 README）
+│   └── deploy/                      # （legacy）早期单环境 ROS2 部署，保留作为参考
+│       ├── policy_agent.py
+│       ├── ros2_deploy.py
+│       └── config.yaml
 ├── scripts/
 │   └── xhum-run                     # 不设 PYTHONPATH 也可运行：./scripts/xhum-run xhum.<模块> …
 ├── pyproject.toml                   # Python 包元数据（本仓库通过 scripts/xhum-run 使用 xhum）
@@ -220,17 +220,32 @@ lerobot-dataset-viz --repo-id my_dataset --episode-index 0 --root /path/to/datas
 
 ### ROS2 部署
 
-仓库根目录直接运行（`hand_type` 在 `config.yaml` 里选 `brainco` / `inspire`）：
+主推**解耦部署**（`src/xhum/deploy_decouple/`）：策略推理跑在 Python 3.12 进程（torch + LeRobot），ROS2 控制循环跑在 Python 3.10 进程（`rclpy`），二者通过 ZMQ 通信。这样彻底避开了 torch 与 `rclpy` 长期存在的 Python 版本冲突，新功能（replay 各模式、debug trace、可配置 home pose 等）也都落在这条路径上。
+
+同机双进程最小启动示例：
 
 ```bash
-./scripts/xhum-run xhum.deploy.ros2_deploy --config /path/to/src/xhum/deploy/config.yaml
-# 编辑 config.yaml：model_path、h5_path（replay）、hand_type、mode 等
+# 终端 A —— 策略服务（Py 3.12，torch + LeRobot 环境）
+cd src/xhum/deploy_decouple/policy
+python policy_server.py \
+  --model_path /path/to/checkpoint/pretrained_model \
+  --bind tcp://127.0.0.1:5555
+
+# 终端 B —— ROS 入口（Py 3.10，先 source ROS2）
+cd src/xhum/deploy_decouple/robot
+python3 run.py --config ./config/my_robot.yaml
 ```
 
-解耦部署（策略 Python3.12 + ROS Python3.10）见 **`src/xhum/deploy_decouple/README_zh.md`**。
+YAML 的 `mode` 切换运行路径：`model`（实时策略）/ `replay`（HDF5 动作经 ZMQ 回放）/ `replay_actions`（开环，不起策略服务）/ `replay_debug`（无 ROS，可在笔记本上跑）。
+
+完整部署说明（各 mode、YAML schema、ZMQ wire 协议、hand_type / camera key 不变量、debug trace）见 **[`src/xhum/deploy_decouple/README_zh.md`](src/xhum/deploy_decouple/README_zh.md)**。
 
 动作向量布局（26 维）：
 - `[0:7]` 左臂，`[7:13]` 左手，`[13:20]` 右臂，`[20:26]` 右手
+
+### Legacy：单体 `src/xhum/deploy/`
+
+`src/xhum/deploy/ros2_deploy.py` 是早期的单进程实现（一个 Python 环境里同时跑 `rclpy` 与 `torch`），保留作为参考，**不再是推荐路径**——新部署请使用上面的解耦方案。
 
 ## 计划
 

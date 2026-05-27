@@ -408,7 +408,8 @@ class PolicyAgentNode(Node):
         rh = self.get_current_hand_position("right")
 
         if self.hand_type == "brainco":
-            return np.concatenate([arm, lh, rh])
+            # return np.concatenate([arm, lh, rh])
+            return np.concatenate([arm[:7], lh, arm[7:], rh])
         if self.hand_type == "inspire":
             return np.concatenate([arm[:7], lh, arm[7:], rh])
         raise ValueError(
