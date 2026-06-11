@@ -31,14 +31,20 @@ class MultiDatasetMetaAdapter:
         self,
         datasets: list[LeRobotDataset],
         disabled_features: set[str] | None = None,
+        rename_map: dict[str, str] | None = None,
     ) -> None:
         first = datasets[0].meta
         disabled = disabled_features or set()
+        rename = rename_map or {}
 
         self.info = dict(first.info)
         self.info["features"] = {
             k: v for k, v in first.info["features"].items() if k not in disabled
         }
+        # Apply rename_map to feature keys
+        for old, new in rename.items():
+            if old in self.info["features"]:
+                self.info["features"][new] = self.info["features"].pop(old)
         self.info["total_episodes"] = sum(d.num_episodes for d in datasets)
         self.info["total_frames"] = sum(d.num_frames for d in datasets)
 
@@ -92,13 +98,24 @@ class MultiRobotDataset(torch.utils.data.Dataset):
         self,
         datasets: list[LeRobotDataset],
         image_transforms: Callable | None = None,
+        rename_map: dict[str, str] | None = None,
     ) -> None:
         super().__init__()
         self._datasets = datasets
+        self._rename_map = rename_map or {}
 
-        intersection = set(datasets[0].features)
+        # Apply rename_map to get effective feature names for intersection
+        def _effective_features(ds):
+            names = set(ds.features)
+            for old, new in self._rename_map.items():
+                if old in names:
+                    names.discard(old)
+                    names.add(new)
+            return names
+
+        intersection = _effective_features(datasets[0])
         for ds in datasets[1:]:
-            intersection &= set(ds.features)
+            intersection &= _effective_features(ds)
         if not intersection:
             raise RuntimeError(
                 "The provided datasets share no common feature keys. "
@@ -107,13 +124,13 @@ class MultiRobotDataset(torch.utils.data.Dataset):
 
         self.disabled_features: set[str] = set()
         for ds in datasets:
-            extra = set(ds.features) - intersection
+            extra = _effective_features(ds) - intersection
             if extra:
                 logger.warning("Disabled non-common features %s from %s", extra, ds.repo_id)
                 self.disabled_features.update(extra)
 
         self.image_transforms = image_transforms
-        self.meta = MultiDatasetMetaAdapter(datasets, self.disabled_features)
+        self.meta = MultiDatasetMetaAdapter(datasets, self.disabled_features, rename_map=self._rename_map)
 
     @property
     def repo_id_to_index(self) -> dict[str, int]:
@@ -140,6 +157,10 @@ class MultiRobotDataset(torch.utils.data.Dataset):
                 item["dataset_index"] = torch.tensor(ds_idx)
                 for k in self.disabled_features:
                     item.pop(k, None)
+                # Apply rename_map: rename old keys to new keys
+                for old, new in self._rename_map.items():
+                    if old in item:
+                        item[new] = item.pop(old)
                 return item
             offset += ds.num_frames
         raise AssertionError("Index within bounds but no dataset matched.")
@@ -162,6 +183,7 @@ def build_multi_dataset(
     image_transforms: Callable | None = None,
     video_backend: str | None = None,
     tolerance_s: float = 1e-4,
+    rename_map: dict[str, str] | None = None,
 ) -> MultiRobotDataset:
     """Build a ``MultiRobotDataset`` from a list of config dicts.
 
@@ -183,4 +205,4 @@ def build_multi_dataset(
             video_backend=video_backend,
         )
         datasets.append(ds)
-    return MultiRobotDataset(datasets, image_transforms=image_transforms)
+    return MultiRobotDataset(datasets, image_transforms=image_transforms, rename_map=rename_map)

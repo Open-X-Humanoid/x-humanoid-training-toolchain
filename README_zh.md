@@ -17,7 +17,7 @@
 - 兼容 LeRobotDataset V3
 - HDF5 到 LeRobot 数据集转换管线
 - 天工机器人 ROS2 部署（BrainCo / Inspire 灵巧手）
-- 具身操作训练流程（ACT、Diffusion Policy）
+- 具身操作训练流程（ACT、Diffusion Policy、π₀.₅）
 
 <table>
     <tbody>
@@ -54,7 +54,8 @@ x-humanoid-training-toolchain/
 │   ├── train/
 │   │   ├── run_train_native.example.sh  # 单数据集 lerobot-train 包装脚本
 │   │   ├── train_multi.py          # 多数据集训练入口
-│   │   └── configs/                # 多数据集训练配置示例
+│   │   ├── wandb_multi.py          # train_multi 的 WandB 日志
+│   │   └── configs/                # 多数据集 / π₀.₅ 训练配置示例
 │   ├── deploy_decouple/             # Py3.12 策略 + Py3.10 ROS（ZMQ 通信，主推；详见该目录 README）
 │   └── deploy/                      # （legacy）早期单环境 ROS2 部署，保留作为参考
 │       ├── policy_agent.py
@@ -175,8 +176,10 @@ pip install -e ./lerobot
 | `--src_root` | 包含 HDF5 episode 文件夹的源目录 |
 | `--tgt_path` | 转换后数据集的输出父目录 |
 | `--task_name` | 任务名称（默认 `default_task`） |
+| `--decode-workers` | 每 episode 图像解码线程数（`0` = 自动） |
+| `--stats-override` | 启用 config 中的 `stats_override` |
 
-> `fps` / `robot_type` 不是 CLI 参数；写在 config JSON 的 `dataset` 段里。详见 [`src/xhum/convert/README.md`](src/xhum/convert/README.md)。
+> `fps` / `robot_type` 不是 CLI 参数；写在 config JSON 的 `dataset` 段里。映射还支持多 key 拼接（`hdf5_keys`）、列切片（`slice`）、数值缩放（`divide_by`）；`episode_path` 不存在时会回退尝试 episode 根目录的 `trajectory.hdf5`。π₀.₅ 三相机示例见 `configs/tianshu_*_express_demo_pi05_puppet.json`。详见 [`src/xhum/convert/README.md`](src/xhum/convert/README.md)。
 
 ### 模型训练
 
@@ -201,6 +204,8 @@ bash src/xhum/train/run_train_native.sh
 ```
 
 config schema 与限制（action/state 维度必须一致）见 [`src/xhum/train/README.md`](src/xhum/train/README.md)。
+
+新增：**π₀.₅** 多数据集微调（`policy.type=pi05`，`MEAN_STD` 归一化，无需 quantile stats）、顶层 **`rename_map`** 对齐相机 key（如 `camera_head` → `base_0_rgb`）、可选 **WandB** 日志（config 中 `wandb.enable`）、**多卡**训练（`accelerate launch --module xhum.train.train_multi`；模板 `run_train_pi05_multi.example_8gpu_fast.sh`，可用 `CONFIG=path/to.json` 换 config）。
 
 ### 可视化
 

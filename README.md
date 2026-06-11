@@ -20,7 +20,10 @@ x-humanoid-training-toolchain/
 │   │   ├── convert.example.sh         # Copy to convert.sh and edit
 │   │   └── configs/                   # Dataset conversion configs
 │   ├── train/
-│   │   └── configs/                   # Training configs (for lerobot-train)
+│   │   ├── run_train_native.example.sh  # Single-dataset lerobot-train wrapper
+│   │   ├── train_multi.py               # Multi-dataset training entry
+│   │   ├── wandb_multi.py               # WandB logging for train_multi
+│   │   └── configs/                     # Multi-dataset / pi0.5 training configs
 │   ├── deploy_decouple/               # Py3.12 policy + Py3.10 ROS over ZMQ (primary; see README inside)
 │   └── deploy/                        # (legacy) Single-env ROS2 deploy — kept for reference
 │       ├── policy_agent.py
@@ -163,6 +166,13 @@ A JSON config file defines the dataset metadata, output features, and HDF5-to-fe
 | `mappings[].decode` | Set to `"jpeg"` / `"png"` / `"image"` for compressed image data |
 | `mappings[].resize` | Optional `[width, height]` to resize decoded images |
 | `mappings[].slice` | Optional `[start, end]` to slice array columns |
+| `mappings[].hdf5_keys` / `mappings[].slices` | Concatenate multiple HDF5 keys along axis-1 |
+| `mappings[].divide_by` | Optional scalar divisor after read (per-key list with `hdf5_keys`) |
+| `stats_override` | Optional manual stats; applied only with `--stats-override` CLI flag |
+
+If `episode_path` is missing under an episode dir, the converter falls back to `trajectory.hdf5` at the episode root (supports both `data/trajectory.hdf5` and flat layouts). Conversion logs `[saved/total]` progress and suppresses noisy video-encoder output by default.
+
+π₀.₅ / multi-camera station configs: see `configs/tianshu_*_express_demo_pi05_puppet.json`. Full mapping options (`divide_by`, batch scripts, etc.): [`src/xhum/convert/README.md`](src/xhum/convert/README.md).
 
 ### Run conversion
 
@@ -182,6 +192,8 @@ A JSON config file defines the dataset metadata, output features, and HDF5-to-fe
 | `--src_root` | Directory containing episode subdirectories |
 | `--tgt_path` | Parent directory for the output dataset |
 | `--task_name` | Task label stored with each frame (default: `default_task`) |
+| `--decode-workers` | JPEG/PNG decode threads per episode (`0` = auto) |
+| `--stats-override` | Apply `stats_override` from config JSON |
 
 ### Output format
 
@@ -227,7 +239,9 @@ For joint training over multiple LeRobot V3 datasets (with feature intersection 
 ./scripts/xhum-run xhum.train.train_multi --config src/xhum/train/configs/multi_train_example.json
 ```
 
-See `src/xhum/train/README.md` for the config schema (action/state dims must match across datasets).
+See [`src/xhum/train/README.md`](src/xhum/train/README.md) for the full config schema (action/state dims must match across datasets).
+
+Recent additions: **π₀.₅** multi-dataset finetuning (`policy.type=pi05`, `MEAN_STD` normalization — no quantile stats required), top-level **`rename_map`** to align dataset camera keys with `pi05_base` (`camera_head` → `base_0_rgb`, etc.), optional **WandB** logging (`wandb.enable` in config), and **multi-GPU** launch via `accelerate launch --module xhum.train.train_multi` (template: `run_train_pi05_multi.example_8gpu_fast.sh`; override config with `CONFIG=path/to.json`).
 
 Checkpoints are saved in HuggingFace `from_pretrained`-compatible format, ready for deployment with `xhum.deploy.policy_agent.PolicyAgent` (or the decoupled copy under `src/xhum/deploy_decouple/policy/`).
 

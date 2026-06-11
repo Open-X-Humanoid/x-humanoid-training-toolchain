@@ -46,6 +46,7 @@ from lerobot.utils.train_utils import (
 from lerobot.utils.utils import format_big_number, has_method, init_logging, inside_slurm
 
 from xhum.train.meta_adapter import build_multi_dataset
+from xhum.train.wandb_multi import maybe_create_wandb_logger
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,24 @@ PRETRAINED_MODEL_DIR = "pretrained_model"
 def load_config(path: str | Path) -> dict:
     with open(path) as f:
         return json.load(f)
+
+
+def _apply_policy_overrides(pol_cfg: PreTrainedConfig, policy_cfg: dict) -> None:
+    """Apply optional policy fields from multi_train JSON (e.g. pi05 MEAN_STD norm)."""
+    from lerobot.configs.types import NormalizationMode
+
+    if "normalization_mapping" in policy_cfg:
+        pol_cfg.normalization_mapping = {
+            key: NormalizationMode(value)
+            for key, value in policy_cfg["normalization_mapping"].items()
+        }
+
+    reserved = {"type", "path", "push_to_hub", "normalization_mapping"}
+    for key, value in policy_cfg.items():
+        if key in reserved:
+            continue
+        if hasattr(pol_cfg, key):
+            setattr(pol_cfg, key, value)
 
 
 def _save_checkpoint(
@@ -85,6 +104,7 @@ def train(cfg: dict) -> None:
     datasets_cfg = cfg["datasets"]
     policy_cfg = cfg["policy"]
     train_cfg = cfg["training"]
+    rename_map: dict[str, str] = cfg.get("rename_map") or policy_cfg.get("rename_map") or {}
     use_imagenet_stats = cfg.get("use_imagenet_stats", True)
     video_backend = cfg.get("video_backend", None)
 
@@ -128,12 +148,19 @@ def train(cfg: dict) -> None:
         from lerobot.policies.factory import make_policy_config
         pol_cfg = make_policy_config(policy_cfg["type"])
 
+    _apply_policy_overrides(pol_cfg, policy_cfg)
+    if is_main and hasattr(pol_cfg, "normalization_mapping"):
+        logging.info("Policy normalization_mapping: %s", pol_cfg.normalization_mapping)
+    if is_main and rename_map:
+        logging.info("Feature rename_map (dataset → policy): %s", rename_map)
+
     delta_timestamps = resolve_delta_timestamps(pol_cfg, first_meta)
 
     dataset = build_multi_dataset(
         datasets_cfg,
         delta_timestamps=delta_timestamps,
         video_backend=video_backend,
+        rename_map=rename_map or None,
     )
     accelerator.wait_for_everyone()
 
@@ -154,34 +181,61 @@ def train(cfg: dict) -> None:
     if policy_cfg.get("path"):
         pol_cfg.pretrained_path = Path(policy_cfg["path"])
 
-    policy = make_policy(cfg=pol_cfg, ds_meta=dataset.meta)
+    policy = make_policy(cfg=pol_cfg, ds_meta=dataset.meta, rename_map=rename_map or None)
 
     # --- pre/post processors ---
-    proc_kwargs: dict = {"dataset_stats": dataset.meta.stats}
-    postproc_kwargs: dict = {}
-    if policy_cfg.get("path"):
-        proc_kwargs["preprocessor_overrides"] = {
-            "device_processor": {"device": device.type},
-            "normalizer_processor": {
-                "stats": dataset.meta.stats,
-                "features": {**policy.config.input_features, **policy.config.output_features},
-                "norm_map": policy.config.normalization_mapping,
-            },
-        }
-        postproc_kwargs["postprocessor_overrides"] = {
-            "unnormalizer_processor": {
-                "stats": dataset.meta.stats,
-                "features": policy.config.output_features,
-                "norm_map": policy.config.normalization_mapping,
-            },
-        }
+    from lerobot.processor import RenameObservationsProcessorStep
+    from lerobot.processor.rename_processor import rename_stats
+    from lerobot.policies.pi05.configuration_pi05 import PI05Config
+    from lerobot.policies.pi05.processor_pi05 import make_pi05_pre_post_processors
 
-    preprocessor, postprocessor = make_pre_post_processors(
-        policy_cfg=pol_cfg,
-        pretrained_path=pol_cfg.pretrained_path if hasattr(pol_cfg, "pretrained_path") else None,
-        **proc_kwargs,
-        **postproc_kwargs,
-    )
+    processor_stats = dataset.meta.stats
+    if rename_map:
+        processor_stats = rename_stats(processor_stats, rename_map)
+
+    if isinstance(pol_cfg, PI05Config):
+        # Build from code instead of loading policy_preprocessor.json from pi05_base.
+        # Upstream pi05_base now lists relative_actions_processor (PR #2970), which is
+        # absent in our vendored lerobot; enabled=false there anyway for base weights.
+        pol_cfg.device = device.type
+        preprocessor, postprocessor = make_pi05_pre_post_processors(
+            config=pol_cfg,
+            dataset_stats=processor_stats,
+        )
+        if rename_map:
+            for step in preprocessor.steps:
+                if isinstance(step, RenameObservationsProcessorStep):
+                    step.rename_map = rename_map
+                    break
+    else:
+        proc_kwargs: dict = {"dataset_stats": processor_stats}
+        postproc_kwargs: dict = {}
+        if policy_cfg.get("path"):
+            preprocessor_overrides = {
+                "device_processor": {"device": device.type},
+                "normalizer_processor": {
+                    "stats": processor_stats,
+                    "features": {**policy.config.input_features, **policy.config.output_features},
+                    "norm_map": policy.config.normalization_mapping,
+                },
+            }
+            if rename_map:
+                preprocessor_overrides["rename_observations_processor"] = {"rename_map": rename_map}
+            proc_kwargs["preprocessor_overrides"] = preprocessor_overrides
+            postproc_kwargs["postprocessor_overrides"] = {
+                "unnormalizer_processor": {
+                    "stats": processor_stats,
+                    "features": policy.config.output_features,
+                    "norm_map": policy.config.normalization_mapping,
+                },
+            }
+
+        preprocessor, postprocessor = make_pre_post_processors(
+            policy_cfg=pol_cfg,
+            pretrained_path=pol_cfg.pretrained_path if hasattr(pol_cfg, "pretrained_path") else None,
+            **proc_kwargs,
+            **postproc_kwargs,
+        )
 
     # --- optimizer / scheduler ---
     optimizer_cfg = pol_cfg.get_optimizer_preset()
@@ -200,6 +254,17 @@ def train(cfg: dict) -> None:
     # --- info ---
     num_learnable = sum(p.numel() for p in policy.parameters() if p.requires_grad)
     num_total = sum(p.numel() for p in policy.parameters())
+    dataset_repo_ids = [d["repo_id"] for d in datasets_cfg]
+    wandb_logger = maybe_create_wandb_logger(
+        cfg,
+        output_dir=output_dir,
+        policy_type=policy_cfg["type"],
+        dataset_repo_ids=dataset_repo_ids,
+        seed=seed,
+        resume=resume,
+        is_main=is_main,
+    )
+
     if is_main:
         logging.info(colored("Output dir:", "yellow", attrs=["bold"]) + f" {output_dir}")
         logging.info("steps=%d (%s)", steps, format_big_number(steps))
@@ -209,6 +274,8 @@ def train(cfg: dict) -> None:
         logging.info("Effective batch size: %d x %d = %d", batch_size, accelerator.num_processes, eff_bs)
         logging.info("num_learnable_params=%d (%s)", num_learnable, format_big_number(num_learnable))
         logging.info("num_total_params=%d (%s)", num_total, format_big_number(num_total))
+        if wandb_logger is None:
+            logging.info(colored("WandB disabled (set wandb.enable=true in config).", "yellow", attrs=["bold"]))
 
     # --- dataloader ---
     dataloader = torch.utils.data.DataLoader(
@@ -283,27 +350,37 @@ def train(cfg: dict) -> None:
 
         if is_log:
             logging.info(train_tracker)
+            if wandb_logger:
+                wandb_log_dict = train_tracker.to_dict()
+                if output_dict:
+                    wandb_log_dict.update(output_dict)
+                wandb_logger.log_dict(wandb_log_dict, step)
             train_tracker.reset_averages()
 
-        if is_save and is_main:
-            logging.info("Saving checkpoint at step %d", step)
-            ckpt_dir = get_step_checkpoint_dir(output_dir, steps, step)
-            _save_checkpoint(
-                ckpt_dir,
-                step,
-                accelerator.unwrap_model(policy),
-                optimizer,
-                lr_scheduler,
-                preprocessor,
-                postprocessor,
-                cfg,
-            )
-            update_last_checkpoint(ckpt_dir)
+        if is_save: # 所有 rank 都进入
+            if is_main: # 只有 rank0 做保存
+                logging.info("Saving checkpoint at step %d", step)
+                ckpt_dir = get_step_checkpoint_dir(output_dir, steps, step)
+                _save_checkpoint(
+                    ckpt_dir,
+                    step,
+                    accelerator.unwrap_model(policy),
+                    optimizer,
+                    lr_scheduler,
+                    preprocessor,
+                    postprocessor,
+                    cfg,
+                )
+                update_last_checkpoint(ckpt_dir)
+                if wandb_logger:
+                    wandb_logger.log_policy(ckpt_dir)
             accelerator.wait_for_everyone()
 
     if is_main:
         progbar.close()
         logging.info("Training complete.")
+        if wandb_logger:
+            wandb_logger.finish()
 
     accelerator.wait_for_everyone()
     accelerator.end_training()

@@ -16,6 +16,30 @@
 src/xhum/train/run_train_native.sh
 src/xhum/convert/convert.sh
 
+src/xhum/convert/tianshu_72_convert.example_batch2.sh
+src/xhum/convert/tianshu_72_convert.example_batch3.sh
+src/xhum/convert/tianshu_72_convert.example_batch23_re.sh
+src/xhum/convert/tianshu_72_convert.example.sh
+src/xhum/convert/tianshu_73_convert.example_batch1.sh
+src/xhum/convert/tianshu_73_convert.example_batch2.sh
+src/xhum/convert/tianshu_73_convert.example_batch3.sh
+src/xhum/train/configs/multi_train_pi05_tianshu_72_back_white_upward_0604.json
+src/xhum/train/configs/multi_train_pi05_tianshu_72_unstack_white_black_upward_downward_unfreeze_vision_encoder_0606.json
+src/xhum/train/configs/multi_train_pi05_tianshu_72_white_downward_unfreeze_vision_encoder_0605.json
+src/xhum/train/configs/multi_train_pi05_tianshu_72_white_upward_260605_unfreeze_ve.json
+src/xhum/train/configs/multi_train_pi05_tianshu_72.json
+
+src/xhum/train/configs/multi_train_pi05_tianshu_73_unstack_white_black_upward_downward_unfreeze_vision_encoder_0609.json
+src/xhum/train/configs/multi_train_pi05_tianshu_73_unstack_white_black_upward_unfreeze_vision_encoder_0606.json
+src/xhum/train/configs/multi_train_pi05_tianshu_73_white_upward_freeze_vision_encoder_0605.json
+src/xhum/train/run_train_pi05_multi.example_8gpu_fast_72_unstack_white_black_upward_downward_unfreeze_vision_encoder_0606.sh
+src/xhum/train/run_train_pi05_multi.example_8gpu_fast_72_white_downward_unfreeze_vision_encoder_0605.sh
+src/xhum/train/run_train_pi05_multi.example_8gpu_fast_72_white_upward_unfreeze_ve_0605.sh
+src/xhum/train/run_train_pi05_multi.example_8gpu_fast_73_unstack_white_black_upward_unfreeze_vision_encoder_0606.sh
+src/xhum/train/run_train_pi05_multi.example_8gpu_fast_73_white_upward_freeze_vision_encoder_0605.sh
+
+
+
 # Decoupled deploy: local RGB dumps from policy_server --save_images_dir
 src/xhum/deploy_decouple/**/debug_server_images/
 

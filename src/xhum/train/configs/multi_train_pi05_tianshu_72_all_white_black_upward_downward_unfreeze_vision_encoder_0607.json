@@ -1,0 +1,113 @@
+{
+  "datasets": [
+    {
+      "repo_id": "tianshu_dualArm_72_grab_and_flip_label_up_white_bag_barcode_upward",
+      "root": "/media/jushen/xr-2/wd/data/station_data/lerobot_v3/station_sta1PlusH_dualArm-gripper-3cameras_72/tianshu_dualArm_72_grab_and_flip_label_up_white_bag_barcode_upward",
+      "episodes": null
+    },
+    {
+      "repo_id": "tianshu_dualArm_72_grab_and_flip_label_up_white_bag_barcode_upward_20260530",
+      "root": "/media/jushen/xr-2/wd/data/station_data/lerobot_v3/station_sta1PlusH_dualArm-gripper-3cameras_72/tianshu_dualArm_72_grab_and_flip_label_up_white_bag_barcode_upward_20260530",
+      "episodes": null
+    },
+    {
+      "repo_id": "tianshu_dualArm_72_grab_and_flip_label_up_black_bag_barcode_upward",
+      "root": "/media/jushen/xr-2/wd/data/station_data/lerobot_v3/station_sta1PlusH_dualArm-gripper-3cameras_72/tianshu_dualArm_72_grab_and_flip_label_up_black_bag_barcode_upward",
+      "episodes": null
+    },
+    {
+      "repo_id": "tianshu_dualArm_72_grab_and_flip_label_up_white_bag_barcode_downward",
+      "root": "/media/jushen/xr-2/wd/data/station_data/lerobot_v3/station_sta1PlusH_dualArm-gripper-3cameras_72/tianshu_dualArm_72_grab_and_flip_label_up_white_bag_barcode_downward",
+      "episodes": null
+    },
+    {
+      "repo_id": "tianshu_dualArm_72_grab_and_flip_label_up_white_bag_barcode_downward_20260601",
+      "root": "/media/jushen/xr-2/wd/data/station_data/lerobot_v3/station_sta1PlusH_dualArm-gripper-3cameras_72/tianshu_dualArm_72_grab_and_flip_label_up_white_bag_barcode_downward_20260601",
+      "episodes": null
+    },
+    {
+      "repo_id": "tianshu_dualArm_72_grab_and_flip_label_up_black_bag_barcode_downward",
+      "root": "/media/jushen/xr-2/wd/data/station_data/lerobot_v3/station_sta1PlusH_dualArm-gripper-3cameras_72/tianshu_dualArm_72_grab_and_flip_label_up_black_bag_barcode_downward",
+      "episodes": null
+    },
+
+    {
+      "repo_id": "tianshu_dualArm_72_grab_and_flip_label_up_black_bag_barcode_downward_20260602",
+      "root": "/media/jushen/xr-2/wd/data/station_data/lerobot_v3/station_sta1PlusH_dualArm-gripper-3cameras_72/tianshu_dualArm_72_grab_and_flip_label_up_black_bag_barcode_downward_20260602",
+      "episodes": null
+    },
+    {
+      "repo_id": "tianshu_dualArm_72_stack_grab_and_flip_label_up_white_bag_barcode_upward",
+      "root": "/media/jushen/xr-2/wd/data/station_data/lerobot_v3/station_sta1PlusH_dualArm-gripper-3cameras_72/tianshu_dualArm_72_stack_grab_and_flip_label_up_white_bag_barcode_upward",
+      "episodes": null
+    },
+    {
+      "repo_id": "tianshu_dualArm_72_stack_grab_and_flip_label_up_black_bag_barcode_upward",
+      "root": "/media/jushen/xr-2/wd/data/station_data/lerobot_v3/station_sta1PlusH_dualArm-gripper-3cameras_72/tianshu_dualArm_72_stack_grab_and_flip_label_up_black_bag_barcode_upward",
+      "episodes": null
+    },
+    {
+      "repo_id": "tianshu_dualArm_72_stack_grab_and_flip_label_up_black_bag_barcode_upward_20260603",
+      "root": "/media/jushen/xr-2/wd/data/station_data/lerobot_v3/station_sta1PlusH_dualArm-gripper-3cameras_72/tianshu_dualArm_72_stack_grab_and_flip_label_up_black_bag_barcode_upward_20260603",
+      "episodes": null
+    },
+    {
+      "repo_id": "tianshu_dualArm_72_stack_grab_and_flip_label_up_white_bag_barcode_downward",
+      "root": "/media/jushen/xr-2/wd/data/station_data/lerobot_v3/station_sta1PlusH_dualArm-gripper-3cameras_72/tianshu_dualArm_72_stack_grab_and_flip_label_up_white_bag_barcode_downward",
+      "episodes": null
+    },
+    {
+      "repo_id": "tianshu_dualArm_72_stack_grab_and_flip_label_up_black_bag_barcode_downward",
+      "root": "/media/jushen/xr-2/wd/data/station_data/lerobot_v3/station_sta1PlusH_dualArm-gripper-3cameras_72/tianshu_dualArm_72_stack_grab_and_flip_label_up_black_bag_barcode_downward",
+      "episodes": null
+    },
+    {
+      "repo_id": "tianshu_dualArm_72_stack_grab_and_flip_label_up_black_bag_barcode_downward_20260604",
+      "root": "/media/jushen/xr-2/wd/data/station_data/lerobot_v3/station_sta1PlusH_dualArm-gripper-3cameras_72/tianshu_dualArm_72_stack_grab_and_flip_label_up_black_bag_barcode_downward_20260604",
+      "episodes": null
+    },
+    {
+      "repo_id": "tianshu_dualArm_72_grab_and_flip_label_up_white_bag_barcode_upward_20260604",
+      "root": "/media/jushen/xr-2/wd/data/station_data/lerobot_v3/station_sta1PlusH_dualArm-gripper-3cameras_72/tianshu_dualArm_72_grab_and_flip_label_up_white_bag_barcode_upward_20260604",
+      "episodes": null
+    }
+  ],
+  "rename_map": {
+    "observation.images.camera_head": "observation.images.base_0_rgb",
+    "observation.images.camera_left": "observation.images.left_wrist_0_rgb",
+    "observation.images.camera_right": "observation.images.right_wrist_0_rgb"
+  },
+  "policy": {
+    "type": "pi05",
+    "path": "lerobot/pi05_base",
+    "push_to_hub": false,
+    "normalization_mapping": {
+      "ACTION": "MEAN_STD",
+      "STATE": "MEAN_STD",
+      "VISUAL": "IDENTITY"
+    },
+    "gradient_checkpointing": true,
+    "dtype": "bfloat16",
+    "compile_model": false,
+    "freeze_vision_encoder": false,
+    "train_expert_only": false
+  },
+  "training": {
+    "output_dir": "/media/jushen/xr-2/wd/ckpt/pi05/multi_train_pi05_tianshu_72_all_white_black_upward_downward_unfreeze_vision_encoder_0607",
+    "job_name": "multi_train_pi05_tianshu_72_all_white_black_upward_downward_unfreeze_vision_encoder_0607",
+    "batch_size": 64,
+    "steps": 100000,
+    "num_workers": 16,
+    "save_freq": 5000,
+    "log_freq": 200,
+    "seed": 1000
+  },
+  "use_imagenet_stats": true,
+  "video_backend": "pyav",
+  "wandb": {
+    "enable": true,
+    "project": "pi05-tianshu-demo",
+    "entity": "714305606-peking-university",
+    "run_name": "multi_train_pi05_tianshu_72_all_white_black_upward_downward_unfreeze_vision_encoder_0607"
+  }
+}

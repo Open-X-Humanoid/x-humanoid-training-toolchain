@@ -7,6 +7,7 @@ Supported mapping features:
   - ``hdf5_key``  — read a single HDF5 dataset.
   - ``hdf5_keys`` — read and concatenate multiple HDF5 datasets along axis-1.
   - ``slice``     — ``[start, end]`` column slice applied to each key.
+  - ``divide_by`` — scalar divisor applied after read (per-key in ``hdf5_keys`` lists).
   - ``stats_override`` (top-level) — manually specify stats for any feature,
     overriding the auto-computed values after all episodes are saved.
 """
@@ -72,20 +73,33 @@ def _read_single_key(h5file: h5py.File, key: str, slc: list | None = None) -> np
     return data
 
 
+def _apply_divide(data: np.ndarray, divisor: float | None) -> np.ndarray:
+    if divisor is not None:
+        data = data / np.float32(divisor)
+    return data
+
+
 def _read_numeric(h5file: h5py.File, mapping: dict) -> np.ndarray:
     """Read numeric field(s) from HDF5. Supports single key or concat of multiple keys."""
     if "hdf5_keys" in mapping:
+        keys = mapping["hdf5_keys"]
+        n = len(keys)
         parts = []
-        slices = mapping.get("slices", [None] * len(mapping["hdf5_keys"]))
-        for key, slc in zip(mapping["hdf5_keys"], slices):
-            parts.append(_read_single_key(h5file, key, slc))
+        slices = mapping.get("slices", [None] * n)
+        divisors = mapping.get("divide_by", [None] * n)
+        if len(slices) != n:
+            raise ValueError(f"slices length {len(slices)} != hdf5_keys length {n}")
+        if len(divisors) != n:
+            raise ValueError(f"divide_by length {len(divisors)} != hdf5_keys length {n}")
+        for key, slc, divisor in zip(keys, slices, divisors):
+            parts.append(_apply_divide(_read_single_key(h5file, key, slc), divisor))
         return np.concatenate(parts, axis=1)
 
     data = np.array(h5file[mapping["hdf5_key"]], dtype=np.float32)
     if "slice" in mapping:
         s = mapping["slice"]
         data = data[:, s[0]:s[1]]
-    return data
+    return _apply_divide(data, mapping.get("divide_by"))
 
 
 def _decode_image_buffer(buf: np.ndarray, resize: tuple[int, int] | None) -> np.ndarray:
@@ -239,6 +253,12 @@ def main():
     saved = 0
     for idx, ep_dir in enumerate(episodes, 1):
         ep_path = ep_dir / episode_rel
+        if not ep_path.exists():
+            flat_path = ep_dir / "trajectory.hdf5"
+            if flat_path.exists():
+                ep_path = flat_path
+            else:
+                logging.warning(f"Episode HDF5 not found: tried {ep_path} and {flat_path}")
         if process_episode(
             ep_path,
             dataset,

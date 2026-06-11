@@ -25,6 +25,9 @@ python src/xhum/convert/inspect_h5.py /path/to/episode/data/trajectory.hdf5
 
 # 显示更多样本行
 python src/xhum/convert/inspect_h5.py /path/to/success_episodes --rows 5
+
+# 指定 episode 内 HDF5 相对路径（默认 data/trajectory.hdf5）
+python src/xhum/convert/inspect_h5.py /path/to/success_episodes --episode_path trajectory.hdf5
 ```
 
 输出示例：
@@ -65,6 +68,10 @@ Config 文件在 `src/xhum/convert/configs/` 目录下。文件结构：
         "fps": 30,
         "robot_type": "tienkung"
     },
+    // episode 子目录内 HDF5 相对路径；常见两种布局：
+    //   data/trajectory.hdf5  — 嵌套在 data/ 下（如 dvt217）
+    //   trajectory.hdf5       — 直接在 episode 根目录（如 dvt228 / evt2-17）
+    // 转换时若该路径不存在，会自动回退尝试 episode 根目录的 trajectory.hdf5
     "episode_path": "data/trajectory.hdf5",
 
     // features: 定义输出 dataset 的特征名、类型、维度
@@ -106,6 +113,16 @@ Config 文件在 `src/xhum/convert/configs/` 目录下。文件结构：
 }
 ```
 
+**数值缩放**（读取后除以标量，常用于原始值需归一化的字段）：
+
+```json
+{
+    "hdf5_key": "puppet/end_effector_left_position_align/data",
+    "divide_by": 100.0,
+    "feature_key": "observation.state"
+}
+```
+
 **多 Key 拼接**（沿 axis-1 拼接多个 HDF5 dataset）：
 
 ```json
@@ -116,13 +133,30 @@ Config 文件在 `src/xhum/convert/configs/` 目录下。文件结构：
 }
 ```
 
-其中 `slices` 逐 key 对应，`null` 表示取全部列：
+其中 `slices` 逐 key 对应，`null` 表示取全部列；`divide_by` 同样逐 key 对应（单 key 时也可写标量）：
 
 ```json
 {
     "hdf5_keys": ["key_a", "key_b"],
     "slices": [null, [0, 6]],
+    "divide_by": [null, 100.0],
     "feature_key": "action"
+}
+```
+
+多 key 拼接 + 缩放完整示例（见 `configs/tianshu_72_express_demo_pi05_puppet.json`）：
+
+```json
+{
+    "hdf5_keys": [
+        "puppet/arm_left_position_align/data",
+        "puppet/end_effector_left_position_align/data",
+        "puppet/arm_right_position_align/data",
+        "puppet/end_effector_right_position_align/data",
+        "puppet/head_position_align/data"
+    ],
+    "feature_key": "observation.state",
+    "divide_by": [null, 100.0, null, 100.0, null]
 }
 ```
 
@@ -191,6 +225,12 @@ Config 文件在 `src/xhum/convert/configs/` 目录下。文件结构：
 | `--decode-workers` | 否 | 图像解码线程数（0=自动，默认） |
 | `--stats-override` | 否 | 启用 config 中的 stats_override（默认关闭） |
 
+### 运行时行为
+
+- **进度计数**：每个 episode 保存成功后输出 `[saved/total]` 进度（如 `[3/120] Saved episode: ...`）。
+- **编码日志抑制**：默认设置 `SVT_LOG=1`（仅输出 SVT-AV1 错误）并压低 ffmpeg/libav 日志，避免大批量转换时刷屏。需要完整编码器诊断时可手动设置 `SVT_LOG=3`。
+- **内存提示**：`--decode-workers` 控制每个 episode 内的 JPEG/PNG 解码线程数，不并行 LeRobot 写入；内存紧张时可设为 `1`。
+
 ### 输出结构
 
 ```
@@ -235,3 +275,15 @@ python src/xhum/convert/inspect_h5.py \
   --config ... \
   --stats-override
 ```
+
+---
+
+## 辅助脚本与示例 Config
+
+**版本库内**：
+
+| 文件 | 说明 |
+|------|------|
+| `convert.example.sh` | 单任务转换模板 |
+| `configs/dvt217_stack_cube.json` / `dvt228_grasp_water.json` | 常用 robot config 示例 |
+| `configs/tianshu_72_express_demo_pi05_puppet.json` | π₀.₅ 三相机 + `divide_by` 处理夹爪缩放100倍 |

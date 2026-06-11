@@ -1,0 +1,75 @@
+{
+    "dataset": {
+        "fps": 30,
+        "robot_type": "tienkung"
+    },
+    "episode_path": "data/trajectory.hdf5",
+    "features": {
+        "observation.state": {
+            "dtype": "float32",
+            "shape": [19],
+            "names": null
+        },
+        "action": {
+            "dtype": "float32",
+            "shape": [19],
+            "names": null
+        },
+        "observation.images.base_0_rgb": {
+            "dtype": "video",
+            "shape": [480, 640, 3],
+            "names": ["height", "width", "channels"]
+        },
+        "observation.images.left_wrist_0_rgb": {
+            "dtype": "video",
+            "shape": [480, 640, 3],
+            "names": ["height", "width", "channels"]
+        },
+        "observation.images.right_wrist_0_rgb": {
+            "dtype": "video",
+            "shape": [480, 640, 3],
+            "names": ["height", "width", "channels"]
+        }
+   
+    },
+    "mappings": [
+        {
+            "hdf5_keys": [
+                "puppet/arm_left_position_align/data",
+                "puppet/end_effector_left_position_align/data",
+                "puppet/arm_right_position_align/data",
+                "puppet/end_effector_right_position_align/data",
+                "puppet/head_position_align/data"
+            ],
+            "feature_key": "observation.state"
+        },
+        {
+            "hdf5_keys": [
+                "master/arm_left_position_align/data",
+                "puppet/end_effector_left_position_align/data",
+                "master/arm_right_position_align/data",
+                "puppet/end_effector_right_position_align/data",
+                "puppet/head_position_align/data"
+            ],
+            "feature_key": "action"
+        },
+        {
+            "hdf5_key": "camera_observations/color_images/camera_head",
+            "feature_key": "observation.images.base_0_rgb",
+            "decode": "jpeg",
+            "resize": [640, 480]
+        },
+        {
+            "hdf5_key": "camera_observations/color_images/camera_left",
+            "feature_key": "observation.images.left_wrist_0_rgb",
+            "decode": "jpeg",
+            "resize": [640, 480]
+        },
+        {
+            "hdf5_key": "camera_observations/color_images/camera_right",
+            "feature_key": "observation.images.right_wrist_0_rgb",
+            "decode": "jpeg",
+            "resize": [640, 480]
+        }
+    ]
+}
