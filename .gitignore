@@ -38,7 +38,7 @@ src/xhum/train/run_train_pi05_multi.example_8gpu_fast_72_white_upward_unfreeze_v
 src/xhum/train/run_train_pi05_multi.example_8gpu_fast_73_unstack_white_black_upward_unfreeze_vision_encoder_0606.sh
 src/xhum/train/run_train_pi05_multi.example_8gpu_fast_73_white_upward_freeze_vision_encoder_0605.sh
 
-
+setup.sh
 
 # Decoupled deploy: local RGB dumps from policy_server --save_images_dir
 src/xhum/deploy_decouple/**/debug_server_images/
