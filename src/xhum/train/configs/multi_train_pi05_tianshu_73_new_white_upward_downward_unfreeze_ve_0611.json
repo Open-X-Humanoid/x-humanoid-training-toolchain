@@ -47,6 +47,7 @@
     "enable": true,
     "project": "pi05-tianshu-demo",
     "entity": "714305606-peking-university",
-    "run_name": "multi_train_pi05_tianshu_73_new_white_upward_downward_unfreeze_ve_0611"
+    "run_name": "multi_train_pi05_tianshu_73_new_white_upward_downward_unfreeze_ve_0611",
+    "disable_artifact": true
   }
 }
