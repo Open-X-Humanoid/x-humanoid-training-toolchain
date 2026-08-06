@@ -46,7 +46,9 @@ def load_config(config_path: str) -> dict:
     return config
 
 
-def initialize_dataset(repo_id: str, tgt_path: str, config: dict) -> LeRobotDataset:
+def initialize_dataset(
+    repo_id: str, tgt_path: str, config: dict, *, streaming_encoding: bool = True
+) -> LeRobotDataset:
     """Initialize a LeRobot V3 dataset from config."""
     dataset_path = Path(tgt_path) / repo_id
 
@@ -62,6 +64,12 @@ def initialize_dataset(repo_id: str, tgt_path: str, config: dict) -> LeRobotData
         fps=ds_cfg["fps"],
         robot_type=ds_cfg.get("robot_type", "unknown"),
         features=config["features"],
+        # With streaming encoding each decoded frame goes straight to the video
+        # encoder instead of being buffered as a temporary PNG and read back. Frame
+        # data and encoded video come out byte-identical; only the image statistics
+        # differ slightly, since the streaming encoder accumulates them over every
+        # frame while the default path samples a subset.
+        streaming_encoding=streaming_encoding,
     )
 
 
@@ -223,6 +231,17 @@ def main():
         ),
     )
     parser.add_argument(
+        "--no-streaming-encoding",
+        dest="streaming_encoding",
+        action="store_false",
+        help=(
+            "Fall back to LeRobot's default path, which buffers every frame as a temporary"
+            " PNG before encoding. Much slower and writes far more scratch data; frames and"
+            " video are unchanged, image statistics come from a sampled subset."
+        ),
+    )
+    parser.set_defaults(streaming_encoding=True)
+    parser.add_argument(
         "--stats-override",
         action="store_true",
         default=False,
@@ -242,7 +261,12 @@ def main():
     logging.getLogger("libav").setLevel(logging.ERROR)
 
     config = load_config(args.config)
-    dataset = initialize_dataset(repo_id=args.repo_id, tgt_path=args.tgt_path, config=config)
+    dataset = initialize_dataset(
+        repo_id=args.repo_id,
+        tgt_path=args.tgt_path,
+        config=config,
+        streaming_encoding=args.streaming_encoding,
+    )
 
     episode_rel = config.get("episode_path", "data/trajectory.hdf5")
     src_root = Path(args.src_root)
