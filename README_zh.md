@@ -153,7 +153,7 @@ pip install -e ./lerobot
 
 ### 数据集转换
 
-将 HDF5 格式的 RoboMIND 数据转换为 LeRobot V3 数据集格式。
+将 HDF5 格式的数据转换为 LeRobot V3 数据集格式。
 
 推荐（在**仓库根目录**执行）：
 
