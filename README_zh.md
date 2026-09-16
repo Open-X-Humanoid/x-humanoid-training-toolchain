@@ -243,7 +243,7 @@ python3 run.py --config ./config/my_robot.yaml
 
 YAML 的 `mode` 切换运行路径：`model`（实时策略）/ `replay`（HDF5 动作经 ZMQ 回放）/ `replay_actions`（开环，不起策略服务）/ `replay_debug`（无 ROS，可在笔记本上跑）。
 
-完整部署说明（各 mode、YAML schema、ZMQ wire 协议、hand_type / camera key 不变量、debug trace）见 **[`src/xhum/deploy_decouple/README_zh.md`](src/xhum/deploy_decouple/README_zh.md)**。
+完整部署说明（**真机逐步流程**、各 mode、`my_robot.yaml`、灵巧手、ZMQ、debug trace）见 **[`src/xhum/deploy_decouple/README_zh.md`](src/xhum/deploy_decouple/README_zh.md)**。
 
 动作向量布局（26 维）：
 - `[0:7]` 左臂，`[7:13]` 左手，`[13:20]` 右臂，`[20:26]` 右手

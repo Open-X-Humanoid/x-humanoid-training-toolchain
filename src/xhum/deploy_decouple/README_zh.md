@@ -61,6 +61,147 @@ deploy_decouple/
 
 ---
 
+## 整体部署流程示例（真机 `mode=model`）
+
+最常见路径：**同机双进程**、实时相机、策略推理、ROS 下发动作。先按这一节跑通，再改 `hand_type` / `mode`。YAML 字段与灵巧手细节见后文。
+
+```
+真机底层 ROS（臂 / 手 / 相机驱动）     话题已通
+                 │
+                 ▼
+   ┌─────────────────────┐  ZMQ REQ/REP   ┌──────────────────────────┐
+   │ policy_server.py    │ ◄────────────► │ robot/run.py             │
+   │ Python 3.12         │  tcp://127.0.0.1:5555  │ Python 3.10 + ROS2      │
+   │ --model_path …      │                │ --config my_robot.yaml   │
+   └─────────────────────┘                └──────────────────────────┘
+```
+
+**启动顺序：** 底层驱动 → **先** `policy_server` → **再** `run.py`。反过来客户端会一直等不到 REP。
+
+### 0. 准备
+
+| 项 | 说明 |
+|----|------|
+| 本仓库 | 含 `lerobot` submodule |
+| Checkpoint | 训练产物目录，内有 `pretrained_model/`（建议带 `policy_preprocessor.json` / `policy_postprocessor.json`） |
+| 策略环境 | **Python 3.12+**，已装 LeRobot + torch（例如 `conda activate lerobot-0.5.1`） |
+| ROS 环境 | **Python 3.10**，`source /opt/ros/humble/setup.bash`；**不要**再 activate lerobot conda |
+| 真机 | 手臂、灵巧手、相机驱动已起，对应话题有数据 |
+| 手型 / 机型 | 与实机一致：`inspire` 或 `brainco`；`tienkung2` 或 `tienkung3` |
+
+### 1. 一次性依赖（每个环境各装一次）
+
+**终端 — 策略环境：**
+
+```bash
+# 仓库根目录
+cd /path/to/x-humanoid-training-toolchain
+# 按你们训练环境安装 LeRobot，例如：
+#   pip install -e "lerobot/[pi]"
+pip install -r src/xhum/deploy_decouple/policy/requirements.txt
+```
+
+**终端 — ROS 环境（未 activate lerobot）：**
+
+```bash
+source /opt/ros/humble/setup.bash
+# 如有机器人 workspace：source ~/ws/install/setup.bash
+pip install -r src/xhum/deploy_decouple/robot/requirements.txt
+# brainco 还需要对应手部消息包：tienkung2 → ros2_stark_interfaces；tienkung3 → brainco_hand_msgs
+```
+
+### 2. 写机端 `my_robot.yaml`
+
+```bash
+cd src/xhum/deploy_decouple/robot
+cp config/config_zmq.example.yaml my_robot.yaml
+```
+
+至少改这些（示例：天工 2 + Inspire，同机）：
+
+```yaml
+mode: model
+hand_type: inspire          # 实机是 BrainCo 则改 brainco
+robot_model: tienkung2      # 天工 3 改 tienkung3
+policy_server_url: tcp://127.0.0.1:5555
+camera_name: camera         # 须与 /<name>/color|depth/image_raw 一致
+action_rate: 20.0
+arm_command:
+  mode: cmd_pos
+# 若 checkpoint 是 observation.images.camera 而不是 inspire 默认的 camera_head：
+# obs_camera_key: camera
+```
+
+机端 YAML **不要写 `model_path`**。
+
+### 3. 确认底层话题（另开终端，ROS 环境）
+
+```bash
+source /opt/ros/humble/setup.bash
+ros2 topic list
+# 相机（mode=model 必看）
+ros2 topic hz /camera/color/image_raw
+# 手臂状态：tienkung2 → /arm/status ；tienkung3 → /robot_state
+# 手：inspire → /inspire_hand/state/left_hand ；brainco → /left_hand/motor_status
+```
+
+没有图像或关节状态时，`run.py` 会卡在 `Images not ready` / `Arm status not ready`。
+
+### 4. 起两个进程
+
+**终端 A — 策略服务（Python 3.12 / lerobot）：**
+
+```bash
+cd src/xhum/deploy_decouple/policy
+export PYTHONPATH=/path/to/x-humanoid-training-toolchain/lerobot/src:$PYTHONPATH
+
+python policy_server.py \
+  --model_path /path/to/checkpoints/last/pretrained_model \
+  --bind tcp://127.0.0.1:5555
+```
+
+看到进程占用 `5555`、模型加载完成后再开终端 B。也可用 `launch/start_policy.example.sh`（先改里面的环境路径）。
+
+**终端 B — ROS 节点（Python 3.10，已 source ROS）：**
+
+```bash
+source /opt/ros/humble/setup.bash
+cd src/xhum/deploy_decouple/robot
+python3 run.py --config ./my_robot.yaml
+```
+
+也可用 `launch/start_robot.example.sh --config ./my_robot.yaml`。
+
+### 5. 起来之后会做什么
+
+`run.py` 在 `mode=model` 下顺序是：
+
+1. **warm_up** 约 3 秒  
+2. **reset_home**：手臂到 `home_position`，双手到 `home_hand`  
+3. 向策略服务发一次 **reset**（清 ACT 缓冲）  
+4. 循环：拼 `images` + `arm_gripper_joints` → ZMQ 推理 → 按 `hand_type` 切 26 维动作 → 发臂/手话题 → 按 `action_rate` sleep  
+
+日志里应出现 `hand_type=...`、`Mode=MODEL`、`Starting remote model inference loop`。
+
+### 6. 停机与换模型
+
+- 先停 **终端 B**（Ctrl+C），再停策略服务。  
+- **换 checkpoint：** 只改终端 A 的 `--model_path` 并重启 A；YAML 不用动。若新模型视觉短名不同，再改 `obs_camera_key`。  
+- **换手 / 换机型：** 改 YAML 的 `hand_type` / `robot_model`，并换对应训练的权重（见「灵巧手」一节）。
+
+### 7. 其它场景（同一套程序，换 `mode`）
+
+| 场景 | 怎么做 |
+|------|--------|
+| 笔记本、不接真机，只验 ZMQ + 模型 | `mode: replay_debug` + `h5_path`；仍先起 `policy_server`。见下文「本地自检」 |
+| 真机开环复现录制轨迹 | `mode: replay_actions`，**不要**起 `policy_server` |
+| HDF5 图像进策略、动作下到真机 | `mode: replay`，先起 `policy_server` |
+| 策略跑在另一台机器 | A 用 `--bind tcp://0.0.0.0:5555`（或该机 IP）；YAML `policy_server_url: tcp://<策略机IP>:5555`；防火墙或 SSH 隧道 |
+
+四种 `mode` 的命令细节见下一节。
+
+---
+
 ## 本机使用：四种 **`mode`**（`model` / `replay` / `replay_actions` / `replay_debug`）
 
 ### A）**`mode=model`**（在线推理）— 两个进程

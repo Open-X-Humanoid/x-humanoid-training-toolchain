@@ -62,6 +62,145 @@ import time. Dependencies are per-env via `policy/requirements.txt` and
 
 ---
 
+## End-to-end deploy walkthrough (real robot, `mode=model`)
+
+The usual path: **two processes on one machine**, live cameras, policy inference, ROS commands. Get this working first, then change `hand_type` / `mode`. YAML keys and hand details are later in this file.
+
+```
+Robot bring-up (arm / hand / camera drivers)     topics live
+                 │
+                 ▼
+   ┌─────────────────────┐  ZMQ REQ/REP   ┌──────────────────────────┐
+   │ policy_server.py    │ ◄────────────► │ robot/run.py             │
+   │ Python 3.12         │  tcp://127.0.0.1:5555  │ Python 3.10 + ROS2      │
+   │ --model_path …      │                │ --config my_robot.yaml   │
+   └─────────────────────┘                └──────────────────────────┘
+```
+
+**Order:** hardware drivers → **`policy_server` first** → then **`run.py`**. If you reverse that, the client waits forever for a REP.
+
+### 0. Prerequisites
+
+| Item | Notes |
+|------|--------|
+| This repo | including the `lerobot` submodule |
+| Checkpoint | training output with `pretrained_model/` (prefer `policy_preprocessor.json` / `policy_postprocessor.json` beside it) |
+| Policy env | **Python 3.12+**, LeRobot + torch (e.g. `conda activate lerobot-0.5.1`) |
+| ROS env | **Python 3.10**, `source /opt/ros/humble/setup.bash`; **do not** activate the lerobot conda env |
+| Robot | arm, dexterous-hand, and camera drivers already running with live topics |
+| Hand / body | match hardware: `inspire` or `brainco`; `tienkung2` or `tienkung3` |
+
+### 1. One-time installs (once per env)
+
+**Policy env:**
+
+```bash
+cd /path/to/x-humanoid-training-toolchain
+# Install LeRobot the same way as training, e.g.:
+#   pip install -e "lerobot/[pi]"
+pip install -r src/xhum/deploy_decouple/policy/requirements.txt
+```
+
+**ROS env (lerobot conda not active):**
+
+```bash
+source /opt/ros/humble/setup.bash
+# plus your robot workspace if you have one: source ~/ws/install/setup.bash
+pip install -r src/xhum/deploy_decouple/robot/requirements.txt
+# brainco also needs the hand msg package: tienkung2 → ros2_stark_interfaces; tienkung3 → brainco_hand_msgs
+```
+
+### 2. Write `my_robot.yaml`
+
+```bash
+cd src/xhum/deploy_decouple/robot
+cp config/config_zmq.example.yaml my_robot.yaml
+```
+
+Minimum edits (example: TienKung 2 + Inspire, same machine):
+
+```yaml
+mode: model
+hand_type: inspire          # brainco on a BrainCo robot
+robot_model: tienkung2      # tienkung3 on TienKung 3
+policy_server_url: tcp://127.0.0.1:5555
+camera_name: camera         # must match /<name>/color|depth/image_raw
+action_rate: 20.0
+arm_command:
+  mode: cmd_pos
+# if the checkpoint uses observation.images.camera instead of inspire's default camera_head:
+# obs_camera_key: camera
+```
+
+Do **not** put `model_path` in this YAML.
+
+### 3. Check driver topics (separate ROS terminal)
+
+```bash
+source /opt/ros/humble/setup.bash
+ros2 topic list
+ros2 topic hz /camera/color/image_raw
+# arm state: tienkung2 → /arm/status ; tienkung3 → /robot_state
+# hand: inspire → /inspire_hand/state/left_hand ; brainco → /left_hand/motor_status
+```
+
+Without images or joint state, `run.py` sits on `Images not ready` / `Arm status not ready`.
+
+### 4. Start both processes
+
+**Terminal A — policy server (Python 3.12 / lerobot):**
+
+```bash
+cd src/xhum/deploy_decouple/policy
+export PYTHONPATH=/path/to/x-humanoid-training-toolchain/lerobot/src:$PYTHONPATH
+
+python policy_server.py \
+  --model_path /path/to/checkpoints/last/pretrained_model \
+  --bind tcp://127.0.0.1:5555
+```
+
+Wait until the model is loaded and port `5555` is bound, then start B. You can also copy `launch/start_policy.example.sh` and edit the env paths.
+
+**Terminal B — ROS node (Python 3.10, ROS sourced):**
+
+```bash
+source /opt/ros/humble/setup.bash
+cd src/xhum/deploy_decouple/robot
+python3 run.py --config ./my_robot.yaml
+```
+
+Or `launch/start_robot.example.sh --config ./my_robot.yaml`.
+
+### 5. What runs after start
+
+In `mode=model`, `run.py` does:
+
+1. **warm_up** (~3 s)  
+2. **reset_home** — arm to `home_position`, hands to `home_hand`  
+3. **reset** on the policy server (clears the ACT buffer)  
+4. Loop: build `images` + `arm_gripper_joints` → ZMQ infer → split the 26-D action by `hand_type` → publish arm/hand → sleep at `action_rate`
+
+Logs should show `hand_type=...`, `Mode=MODEL`, and `Starting remote model inference loop`.
+
+### 6. Stop and switch checkpoints
+
+- Stop **terminal B** first (Ctrl+C), then the policy server.  
+- **New checkpoint:** change `--model_path` on A and restart A; leave YAML alone unless the vision short name changed (`obs_camera_key`).  
+- **New hand / body:** edit `hand_type` / `robot_model` and use a matching checkpoint (see *Dexterous hands*).
+
+### 7. Other setups (same binaries, different `mode`)
+
+| Situation | What to do |
+|-----------|------------|
+| Laptop, no robot — smoke-test ZMQ + the model | `mode: replay_debug` + `h5_path`; still start `policy_server` first. See *Local checks* |
+| Open-loop replay of a recorded trajectory | `mode: replay_actions`; **do not** start `policy_server` |
+| HDF5 images through the policy, actions on the robot | `mode: replay`; start `policy_server` first |
+| Policy on another host | A: `--bind tcp://0.0.0.0:5555` (or that host's IP); YAML `policy_server_url: tcp://<policy-host>:5555`; firewall or SSH tunnel |
+
+Per-mode command details are in the next section.
+
+---
+
 ## Same machine: four YAML **`mode`** values (`model` / `replay` / `replay_actions` / `replay_debug`)
 
 ### A) **`mode=model`** (live policy) — two processes

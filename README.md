@@ -265,7 +265,7 @@ python3 run.py --config ./config/my_robot.yaml
 
 YAML `mode` selects the runtime path: `model` (live policy), `replay` (HDF5 actions streamed via ZMQ), `replay_actions` (open-loop, no policy server), `replay_debug` (no ROS — runs on a laptop).
 
-See **[`src/xhum/deploy_decouple/README.md`](src/xhum/deploy_decouple/README.md)** for the full guide: modes, YAML schema, ZMQ wire protocol, hand-type / camera-key invariants, and debug traces.
+See **[`src/xhum/deploy_decouple/README.md`](src/xhum/deploy_decouple/README.md)** for the full guide: **end-to-end robot walkthrough**, modes, `my_robot.yaml`, dexterous hands, ZMQ, and debug traces.
 
 ### Legacy: monolithic `src/xhum/deploy/`
 
