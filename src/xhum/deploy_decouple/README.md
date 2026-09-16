@@ -120,11 +120,95 @@ Loads **RGB + state** from the same HDF5 each step, sends them to **`policy_serv
 
 ---
 
-## Configuration
+## Robot YAML (`my_robot.yaml`)
 
-- Copy **`robot/config/config_zmq.example.yaml`** → `my_robot.yaml` (under `robot/`).
-- **Robot YAML has no `model_path`**; ZMQ-related fields are **`policy_server_url`**, etc. To change checkpoints, update **`policy_server.py --model_path`** and restart the server.
-- Comments inside the YAML (Chinese) explain `mode` (`model` / `replay` / `replay_actions` / `replay_debug`), `hand_type`, **`h5_path`**, optional **`replay_*_h5_key`**, **`camera_name`** (live camera: model only), `action_rate`, optional **`obs_camera_key`**, **`image_save`**, **`joints`** (joint vector dumps + ZMQ decode check), and **`arm_command.mode`** (`cmd_pos` or `flex_freq`; arm ROS topics are fixed in `ros2_node.py`). Legacy **`replay_via_zmq`** is deprecated (see YAML header).
+This is the config the ROS entry point loads (the filename is conventional; `--config` can point anywhere). The repo only tracks **`robot/config/config_zmq.example.yaml`**. Local copies such as `my_robot.yaml` are gitignored — do not commit machine-specific paths.
+
+```bash
+cd src/xhum/deploy_decouple/robot
+cp config/config_zmq.example.yaml my_robot.yaml   # or config/my_robot.yaml
+python3 run.py --config ./my_robot.yaml
+```
+
+**There is no `model_path` in the robot YAML.** Weights load only via `policy_server.py --model_path`. ZMQ carries observations and actions. To switch a checkpoint, change that flag and **restart the policy process**.
+
+Field-level comments live in the example YAML (Chinese). The tables below are what you need before editing.
+
+### Required / commonly used keys
+
+| Key | Role |
+|-----|------|
+| **`mode`** | `model` / `replay` / `replay_actions` / `replay_debug` (see previous section) |
+| **`hand_type`** | Dexterous hand: `inspire` or `brainco` (next section) |
+| **`robot_model`** | `tienkung2` or `tienkung3` (arm ROS msgs/topics; for brainco also the hand msg package and action split) |
+| **`policy_server_url`** | Must match `policy_server.py --bind` exactly, e.g. `tcp://127.0.0.1:5555` |
+| **`h5_path`** | Required for `replay` / `replay_actions` / `replay_debug` |
+| **`camera_name`** | **`mode=model` only**: subscribe `/<name>/color\|depth/image_raw` |
+| **`action_rate`** | Sleep frequency (Hz) after each command; default `20.0` |
+| **`arm_command.mode`** | `cmd_pos` or `flex_freq` (topic names are hardcoded in `ros2_node.py`; do not put topics in YAML) |
+
+### Often omitted (filled from `hand_type` defaults)
+
+`config_loader.py` `HAND_TYPE_DEFAULTS` supplies `obs_camera_key`, `home_position`, `home_wait`, `home_hand`, `arm_spd`, `arm_cur` when missing.
+
+| Key | Notes |
+|-----|-------|
+| **`obs_camera_key`** | Must match `observation.images.<short_name>` in the checkpoint. Default `camera_head` (inspire) / `camera` (brainco) |
+| **`home_position`** | 14-DoF arm target used by `reset_home` |
+| **`home_hand.left` / `right`** | Hand pose at home (units depend on `hand_type`) |
+| **`policy_zmq_timeout_ms`** | Default `120000`; `0` = no timeout |
+| **`replay_images_h5_key` / `replay_state_h5_key`** | Explicit HDF5 paths when auto-discovery fails |
+| **`image_save` / `joints`** | Optional dumps (see later sections) |
+
+Legacy **`replay_via_zmq`**: `mode=replay` + `replay_via_zmq: false` is normalized to `replay_actions` with a deprecation warning.
+
+---
+
+## Dexterous hands (`hand_type`)
+
+The deploy stack supports two hands: **Inspire** and **BrainCo**. Switching is primarily YAML **`hand_type`**, plus three invariants: the live ROS interface, the checkpoint's action/obs layout, and (for brainco) **`robot_model`**.
+
+```yaml
+hand_type: inspire    # or brainco
+robot_model: tienkung2   # or tienkung3
+```
+
+You cannot mix both hands in one process. An unknown `hand_type` fails at node init.
+
+### Comparison
+
+| | **Inspire** | **BrainCo** |
+|--|-------------|-------------|
+| YAML | `hand_type: inspire` | `hand_type: brainco` |
+| Command topics | `/inspire_hand/ctrl/{left,right}_hand` (`sensor_msgs/JointState`) | `/left_hand/set_motor_multi`, `/right_hand/set_motor_multi` |
+| State topics | `/inspire_hand/state/{left,right}_hand` | `/left_hand/motor_status`, `/right_hand/motor_status` |
+| Command units | float `[0, 1]` (rounded to 0.1; `1.0` ≈ fully open) | int `[0, 100]` (`99` ≈ fully open) |
+| Default `obs_camera_key` | `camera_head` | `camera` |
+| Default `arm_spd` / `arm_cur` | `0.5` / `5.0` | `150.0` / `80.0` |
+| Default `home_wait` | `3` | `5` |
+| ROS msg package | standard `JointState` | **tienkung2**: `ros2_stark_interfaces`; **tienkung3**: `brainco_hand_msgs` |
+
+`home_hand` accepts a scalar (broadcast to 6) or a length-6 list. Setting only `left` keeps the `hand_type` default for `right`, and vice versa.
+
+### How the 26-D action is split
+
+Policy output is always **26-D** (14 arm + 12 hands). **The split** depends on hand and robot model and must match training / the checkpoint — otherwise finger values are published as arm joints.
+
+| `hand_type` + `robot_model` | `publish_action` split |
+|-----------------------------|------------------------|
+| **inspire** (any model) | interleaved: `larm(7) + lhand(6) + rarm(7) + rhand(6)` |
+| **brainco + tienkung3** | same interleaved layout as inspire |
+| **brainco + tienkung2** | contiguous arms first: `arm(14) + lhand(6) + rhand(6)` |
+
+Live `mode=model` proprioception (`arm_gripper_joints`) is currently assembled interleaved (left arm 7 + left hand 6 + right arm 7 + right hand 6), same as inspire. If a brainco checkpoint was trained with the tienkung2 `arm(14)+hands(12)` layout, keep `robot_model` aligned with that checkpoint.
+
+### Switching hands
+
+1. Set **`hand_type`** (and **`robot_model`** when using brainco).
+2. The ROS env must import the message package in the table above; missing packages raise `ImportError` in `_setup_*_hands`.
+3. Set **`obs_camera_key`** to the checkpoint's vision short name; do not rely on the hand default if they differ.
+4. Point **`--model_path`** at a checkpoint trained for that hand. Inspire weights are not drop-in on a brainco robot, and vice versa.
+5. Override **`home_position` / `home_hand`** in YAML if you need a different home; do not edit the defaults table in code.
 
 ---
 

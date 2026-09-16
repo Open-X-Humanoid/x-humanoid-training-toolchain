@@ -119,11 +119,95 @@ python3 run.py --config ./my_robot.yaml
 
 ---
 
-## 配置文件
+## 配置文件 `my_robot.yaml`
 
-- 复制 **`robot/config/config_zmq.example.yaml`** → **`my_robot.yaml`**（放在 `robot/` 下）。
-- **机端 YAML 不含 `model_path`**；与 ZMQ 相关的只有 **`policy_server_url`** 等。换模型只改 **`policy_server.py --model_path`** 并重启服务。
-- 示例 YAML 内为**中文注释**，说明：`mode`（`model` / `replay` / `replay_actions` / `replay_debug`）、`hand_type`、**`h5_path`**、可选 **`replay_*_h5_key`**、**`camera_name`**（**仅 model** 订阅实时相机）、`action_rate`、**`obs_camera_key`**、**`image_save`**、**`joints`**（关节向量落盘与 ZMQ 编解码校验）、**`arm_command.mode`**（`cmd_pos` 或 `flex_freq`；手臂话题名写死在 `ros2_node.py`）等；旧字段 **`replay_via_zmq`** 已弃用（见示例 YAML 顶栏）。
+机端入口读的就是这份 YAML（示例文件名；也可叫别的，`--config` 指向即可）。**仓库只跟踪** `robot/config/config_zmq.example.yaml`，本地复制出来的 `my_robot.yaml` 已被 gitignore，不要提交实机路径。
+
+```bash
+cd src/xhum/deploy_decouple/robot
+cp config/config_zmq.example.yaml my_robot.yaml   # 或 config/my_robot.yaml
+python3 run.py --config ./my_robot.yaml
+```
+
+**机端 YAML 没有 `model_path`。** 权重只在 `policy_server.py --model_path` 加载；ZMQ 只传观测与动作。换 checkpoint：改服务端参数并**重启策略进程**。
+
+字段级中文注释以示例 YAML 为准。下面是 README 里应先看懂的部分。
+
+### 必填 / 常用字段
+
+| 字段 | 作用 |
+|------|------|
+| **`mode`** | `model` / `replay` / `replay_actions` / `replay_debug`（见上一节） |
+| **`hand_type`** | 灵巧手：`inspire` 或 `brainco`（见下一节） |
+| **`robot_model`** | 机型：`tienkung2` 或 `tienkung3`（决定手臂 ROS 消息/话题；brainco 时还决定手部消息包与动作切分） |
+| **`policy_server_url`** | 必须与 `policy_server.py --bind` 完全一致，例如 `tcp://127.0.0.1:5555` |
+| **`h5_path`** | `replay` / `replay_actions` / `replay_debug` 必填 |
+| **`camera_name`** | **仅 `mode=model`**：订阅 `/<name>/color\|depth/image_raw` |
+| **`action_rate`** | 下发一拍后的 sleep 频率（Hz），默认 `20.0` |
+| **`arm_command.mode`** | `cmd_pos` 或 `flex_freq`（话题名写死在 `ros2_node.py`，YAML 里不要写 topic） |
+
+### 常可省略（会按 `hand_type` 填默认）
+
+未写时由 `config_loader.py` 的 `HAND_TYPE_DEFAULTS` 补齐：`obs_camera_key`、`home_position`、`home_wait`、`home_hand`、`arm_spd`、`arm_cur`。
+
+| 字段 | 说明 |
+|------|------|
+| **`obs_camera_key`** | 必须与 checkpoint 里 `observation.images.<短名>` 一致。inspire 默认 `camera_head`；brainco 默认 `camera` |
+| **`home_position`** | `reset_home` 时 14 维手臂目标 |
+| **`home_hand.left` / `right`** | 回 home 时双手位姿（单位随 `hand_type` 不同，见下节） |
+| **`policy_zmq_timeout_ms`** | ZMQ 超时，默认 `120000`；`0` = 不超时 |
+| **`replay_images_h5_key` / `replay_state_h5_key`** | 自动找不到 HDF5 数据集时显式指定 |
+| **`image_save` / `joints`** | 落盘调试用（见后文） |
+
+旧字段 **`replay_via_zmq`** 已弃用：若仍写 `mode=replay` 且 `replay_via_zmq: false`，加载时会当成 `replay_actions` 并打警告。
+
+---
+
+## 灵巧手（`hand_type`）
+
+部署侧目前支持两种：**Inspire** 与 **BrainCo**。换手主要改 YAML 的 **`hand_type`**，并保证三件事一致：实机 ROS 接口、策略 checkpoint 的动作/观测布局、（brainco 时）**`robot_model`**。
+
+```yaml
+hand_type: inspire    # 或 brainco
+robot_model: tienkung2   # 或 tienkung3
+```
+
+不支持在同一进程里混装两种手。`hand_type` 非法会在节点初始化时直接报错。
+
+### 对照
+
+| | **Inspire** | **BrainCo** |
+|--|-------------|-------------|
+| YAML | `hand_type: inspire` | `hand_type: brainco` |
+| 控制话题 | `/inspire_hand/ctrl/{left,right}_hand`（`sensor_msgs/JointState`） | `/left_hand/set_motor_multi`、`/right_hand/set_motor_multi` |
+| 状态话题 | `/inspire_hand/state/{left,right}_hand` | `/left_hand/motor_status`、`/right_hand/motor_status` |
+| 手部位姿单位 | `[0, 1]` 浮点（四舍五入到 0.1；`1.0` ≈ 全开） | 整数 `[0, 100]`（`99` ≈ 全开） |
+| 默认 `obs_camera_key` | `camera_head` | `camera` |
+| 默认 `arm_spd` / `arm_cur` | `0.5` / `5.0` | `150.0` / `80.0` |
+| 默认 `home_wait` | `3` | `5` |
+| ROS 消息包 | 标准 `JointState` | **tienkung2**：`ros2_stark_interfaces`；**tienkung3**：`brainco_hand_msgs` |
+
+`home_hand` 可写单个标量（广播成 6 维）或长度 6 的 list。只写 `left` 时 `right` 仍用该 `hand_type` 的默认，反之亦然。
+
+### 26 维动作如何切成臂 + 手
+
+策略输出长度均为 **26**（双臂 14 + 双手 12）。**切分方式**随手型和机型变化，必须与训练数据 / checkpoint 一致，否则会把手指值当关节角下发。
+
+| `hand_type` + `robot_model` | `publish_action` 切分 |
+|-----------------------------|------------------------|
+| **inspire**（任意机型） | 交错：`larm(7) + lhand(6) + rarm(7) + rhand(6)` |
+| **brainco + tienkung3** | 与 inspire 相同（交错） |
+| **brainco + tienkung2** | 先双臂再双手：`arm(14) + lhand(6) + rhand(6)` |
+
+在线 `mode=model` 的本体感觉 `arm_gripper_joints` 当前按交错布局组装（左臂 7 + 左手 6 + 右臂 7 + 右手 6），与 inspire 一致。若你的 brainco 模型是按 tienkung2 的「臂 14 + 手 12」训练的，请确认 checkpoint 与 `robot_model` 匹配。
+
+### 换手 checklist
+
+1. YAML 设对 **`hand_type`**（以及 brainco 时的 **`robot_model`**）。
+2. ROS 环境能 import 上表对应的消息包；缺包会在 `_setup_*_hands` 时 `ImportError`。
+3. **`obs_camera_key`** 与该 checkpoint 的视觉短名一致；不一致就在 YAML 里显式写，不要依赖默认。
+4. 用与该手一起训练的 **`--model_path`**；inspire 权重不能直接套 brainco 机，反之亦然。
+5. 需要改回 home 姿态时覆盖 **`home_position` / `home_hand`**，不要改代码里的默认表。
 
 ---
 
